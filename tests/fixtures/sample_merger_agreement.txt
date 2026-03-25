@@ -1,0 +1,43 @@
+AGREEMENT AND PLAN OF MERGER
+
+by and among
+
+BROADCOM INC.,
+VERMONT MERGER SUB, INC.,
+and
+VMWARE, INC.
+
+Dated as of May 26, 2022
+
+ARTICLE VI — COVENANTS
+
+Section 6.3 Regulatory Filings
+
+Each of the parties shall use its reasonable best efforts to (a) file or cause to be filed, as promptly as practicable and in any event within ten (10) Business Days after the date of this Agreement, all applications, notices, petitions and filings required to be filed by such party with any Governmental Authority with respect to the Transactions, including the filings required under the HSR Act, and (b) make as promptly as practicable all other filings and submissions under any applicable Antitrust Laws.
+
+The parties shall use reasonable best efforts to file the required notification under the EU Merger Regulation within fifteen (15) Business Days after the date of this Agreement.
+
+ARTICLE VII — CONDITIONS TO CLOSING
+
+Section 7.1 Conditions to Each Party's Obligations
+
+(a) Antitrust Approvals. The waiting period applicable to the Merger under the HSR Act shall have expired or been terminated. The European Commission shall have granted clearance. SAMR shall have granted clearance. All other required Antitrust Approvals shall have been obtained.
+
+(b) Shareholder Approval. The VMware stockholders shall have approved the adoption of this Agreement.
+
+ARTICLE VIII — TERMINATION
+
+Section 8.1 Termination
+
+This Agreement may be terminated at any time prior to the Effective Time:
+
+(d) by either party if the Merger shall not have been consummated by May 26, 2023 (the "Outside Date"); provided that the Outside Date shall be automatically extended to November 26, 2023 if all conditions other than the receipt of Antitrust Approvals have been satisfied.
+
+Section 8.2 Termination Fees
+
+Target Termination Fee: $1,500,000,000
+Reverse Termination Fee: $1,500,000,000
+
+Section 6.5 Regulatory Efforts
+
+Parent shall use reasonable best efforts to take all actions necessary to obtain all required Antitrust Approvals, including offering to divest, hold separate, or otherwise dispose of any assets, properties, or businesses with annual revenues up to $2,000,000,000 in the aggregate.

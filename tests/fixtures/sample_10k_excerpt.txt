@@ -1,0 +1,32 @@
+ITEM 1. BUSINESS
+
+Overview
+
+VMware, Inc. ("VMware," "we," "our" or the "Company") is a leading provider of multi-cloud services for all apps, enabling digital innovation with enterprise control. Our software provides a comprehensive set of highly scalable virtualization, networking, and security solutions.
+
+Geographic Revenue
+
+Our revenue by geographic region for fiscal 2022:
+
+United States: $6,234 million (49%)
+Europe, Middle East and Africa (EMEA): $3,456 million (27%)
+Asia-Pacific and Japan (APJ): $3,078 million (24%)
+Total Revenue: $12,768 million
+
+Competition
+
+The markets in which we compete are highly competitive. Our principal competitors include:
+- Microsoft Corporation (Hyper-V, Azure)
+- Amazon Web Services (AWS)
+- Citrix Systems, Inc.
+- Red Hat, Inc. (IBM)
+- Nutanix, Inc.
+- Dell Technologies (in certain product areas)
+
+ITEM 1A. RISK FACTORS
+
+Regulatory Risks
+
+Our business is subject to various regulatory requirements in the United States and foreign jurisdictions. Changes in trade policies, tariffs, or regulatory requirements could adversely affect our business operations.
+
+We derive significant revenue from customers located outside of the United States, including substantial operations in the European Union, the United Kingdom, and the People's Republic of China. Our international operations subject us to various regulatory frameworks.

@@ -1,0 +1,83 @@
+{
+  "sample_deal": {
+    "deal_pk": 12345,
+    "deal_id": "D-AVGO-VMW-2022",
+    "deal_status": "Completed",
+    "date_announced": "2022-05-26",
+    "deal_value_usd": 69000000000,
+    "industry": "Semiconductors",
+    "acquirer_type": "Strategic",
+    "type_of_consideration": "Cash/Stock",
+    "gics_sector": "Information Technology",
+    "deal_attitude": "Friendly",
+    "cross_border_flag": true,
+    "timeline_days": 512,
+    "actual_completion_date": "2023-11-22",
+    "deal_outcome": "Closed"
+  },
+  "sample_antitrust": {
+    "deal_pk": 12345,
+    "is_hsr_applicable": true,
+    "has_second_request": false,
+    "has_early_termination": false,
+    "hsr_filing_date": "2022-06-22",
+    "early_termination_date": null,
+    "second_request_date": null
+  },
+  "sample_ec_antitrust": {
+    "deal_pk": 12345,
+    "is_ec_approval_required": true,
+    "ec_filing_date": "2022-11-15",
+    "phase_1_cleared_date": null,
+    "phase_2_date": "2023-02-16",
+    "ec_final_clearance_date": "2023-07-12",
+    "phase_1_outcome": "Phase 2 opened",
+    "phase_2_outcome": "Cleared with commitments"
+  },
+  "sample_competitive_analysis": {
+    "deal_pk": 12345,
+    "product_market_overlap": "Virtualization software, networking",
+    "geographic_market_overlap": "Global",
+    "combined_market_share_pct": 35,
+    "hhi_delta": 450,
+    "target_lists_acquirer_competitor": false,
+    "acquirer_lists_target_competitor": false,
+    "remedy_feasibility": "Divestiture of VMware Spring"
+  },
+  "comparable_deals": [
+    {
+      "deal_pk": 10001,
+      "deal_id": "D-MSFT-ATVI",
+      "acquirer_name": "Microsoft",
+      "target_name": "Activision Blizzard",
+      "industry": "Software",
+      "deal_value_usd": 68700000000,
+      "type_of_consideration": "Cash",
+      "date_announced": "2022-01-18",
+      "actual_completion_date": "2023-10-13",
+      "timeline_days": 633,
+      "deal_outcome": "Closed",
+      "is_hsr_applicable": true,
+      "has_second_request": true,
+      "is_ec_approval_required": true,
+      "is_cma_approval_required": true
+    },
+    {
+      "deal_pk": 10002,
+      "deal_id": "D-AMD-XLNX",
+      "acquirer_name": "AMD",
+      "target_name": "Xilinx",
+      "industry": "Semiconductors",
+      "deal_value_usd": 35000000000,
+      "type_of_consideration": "Stock",
+      "date_announced": "2020-10-27",
+      "actual_completion_date": "2022-02-14",
+      "timeline_days": 476,
+      "deal_outcome": "Closed",
+      "is_hsr_applicable": true,
+      "has_second_request": false,
+      "is_ec_approval_required": true,
+      "is_samr_approval_required": true
+    }
+  ]
+}
