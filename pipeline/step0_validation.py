@@ -5,7 +5,10 @@ Resolves tickers, checks MARS for existing deal data, constructs DealParameters.
 """
 import logging
 from typing import Optional
-from models.deal import DealInput, DealParameters, DealStructure, BuyerType, ValidationResult
+from models.deal import (
+    DealInput, DealParameters, DealStructure,
+    BuyerType, ValidationResult,
+)
 from db.queries_comparables import find_deal_by_tickers
 
 logger = logging.getLogger(__name__)
@@ -17,13 +20,23 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
     warnings = []
 
     # Step 1: Resolve CIKs via AF-SECAPI
-    acquirer_cik, acquirer_name = await _resolve_ticker(deal_input.acquirer_ticker)
+    acquirer_cik, acquirer_name = await _resolve_ticker(
+        deal_input.acquirer_ticker
+    )
     if not acquirer_cik:
-        errors.append(f"Could not resolve acquirer ticker: {deal_input.acquirer_ticker}")
+        errors.append(
+            f"Could not resolve acquirer ticker: "
+            f"{deal_input.acquirer_ticker}"
+        )
 
-    target_cik, target_name = await _resolve_ticker(deal_input.target_ticker)
+    target_cik, target_name = await _resolve_ticker(
+        deal_input.target_ticker
+    )
     if not target_cik:
-        errors.append(f"Could not resolve target ticker: {deal_input.target_ticker}")
+        errors.append(
+            f"Could not resolve target ticker: "
+            f"{deal_input.target_ticker}"
+        )
 
     if errors:
         return ValidationResult(is_valid=False, errors=errors)
@@ -41,15 +54,19 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
     # Step 3: Build DealParameters
     if mars_deal:
         deal_params = _build_from_mars(
-            deal_input, mars_deal, acquirer_cik, acquirer_name, target_cik, target_name
+            deal_input, mars_deal,
+            acquirer_cik, acquirer_name,
+            target_cik, target_name,
         )
         if mars_deal.get("deal_outcome") in ("Completed", "Terminated"):
             warnings.append(
-                f"Deal is {mars_deal['deal_outcome']}. Producing forward estimate anyway."
+                f"Deal is {mars_deal['deal_outcome']}. "
+                f"Producing forward estimate anyway."
             )
     else:
         deal_params = _build_from_input(
-            deal_input, acquirer_cik, acquirer_name, target_cik, target_name
+            deal_input, acquirer_cik, acquirer_name,
+            target_cik, target_name,
         )
         warnings.append("Deal not found in MARS. Using EDGAR-only data.")
 
@@ -58,16 +75,20 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
     )
 
 
-async def _resolve_ticker(ticker: str) -> tuple[Optional[str], Optional[str]]:
+async def _resolve_ticker(
+    ticker: str,
+) -> tuple[Optional[str], Optional[str]]:
     """Resolve a ticker to CIK and company name via AF-SECAPI."""
     try:
-        from sec_api_tools import EdgarClient
-        async with EdgarClient() as client:
-            result = await client.resolve_cik(ticker)
-            if result:
-                info = await client.get_company_info(result)
-                name = info.get("name", ticker) if info else ticker
-                return result, name
+        from sec_api_tools import (
+            get_client, resolve_cik, get_company_info,
+        )
+        async with get_client() as client:
+            cik = await resolve_cik(ticker, client)
+            if cik:
+                info = await get_company_info(cik, client)
+                name = info.name if info else ticker
+                return cik, name
     except Exception as e:
         logger.error(f"Failed to resolve ticker {ticker}: {e}")
     return None, None
@@ -78,7 +99,6 @@ def _build_from_mars(
     acq_cik: str, acq_name: str, tgt_cik: str, tgt_name: str,
 ) -> DealParameters:
     """Build DealParameters from MARS deal data."""
-    # Map MARS type_of_consideration to DealStructure
     consideration = (mars.get("type_of_consideration") or "").lower()
     if "cash" in consideration and "stock" in consideration:
         structure = DealStructure.MIXED
@@ -89,7 +109,6 @@ def _build_from_mars(
     else:
         structure = DealStructure.CASH
 
-    # Map acquirer_type to BuyerType
     acq_type = (mars.get("acquirer_type") or "").lower()
     if "pe" in acq_type or "sponsor" in acq_type:
         buyer_type = BuyerType.PE_SPONSOR
@@ -105,10 +124,16 @@ def _build_from_mars(
         target_ticker=deal_input.target_ticker,
         target_name=mars.get("target_name", tgt_name),
         target_cik=tgt_cik,
-        deal_value_usd=deal_input.deal_value_usd or mars.get("deal_value_usd", 0),
+        deal_value_usd=(
+            deal_input.deal_value_usd
+            or mars.get("deal_value_usd", 0)
+        ),
         deal_structure=structure,
         buyer_type=buyer_type,
-        announcement_date=deal_input.announcement_date or mars.get("date_announced"),
+        announcement_date=(
+            deal_input.announcement_date
+            or mars.get("date_announced")
+        ),
         sector=mars.get("gics_sector", ""),
         industry=mars.get("industry", ""),
         gics_sector=mars.get("gics_sector"),

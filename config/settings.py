@@ -3,8 +3,6 @@ Pydantic Settings for all configuration.
 Load from .env or environment variables.
 """
 from pydantic_settings import BaseSettings
-from typing import Optional
-
 
 class Settings(BaseSettings):
     # MARS Database
@@ -22,7 +20,8 @@ class Settings(BaseSettings):
 
     # OpenRouter (for LLM extraction)
     openrouter_api_key: str = ""
-    extraction_model: str = "anthropic/claude-sonnet-4-20250514"
+    extraction_model: str = "google/gemini-2.5-flash"
+    reasoning_model: str = "google/gemini-2.5-flash"
 
     # Tool behavior
     max_comparables_per_group: int = 15
@@ -33,3 +32,4 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = ""
+        extra = "ignore"

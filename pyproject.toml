@@ -11,6 +11,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["config*", "models*", "db*", "parsers*", "scoring*", "state_machines*", "pipeline*", "output*", "scripts*", "tests*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",

@@ -36,8 +36,8 @@ _REGULATORY_COLUMNS = """
 
 _BASE_DEAL_COLUMNS = """
     d.deal_pk, d.deal_id, d.deal_status, d.date_announced,
-    d.deal_value_usd, d.industry, d.acquirer_type, d.type_of_consideration,
-    d.gics_sector, d.deal_attitude, d.cross_border_flag,
+    d.deal_value_usd, d.industry, d.type_of_consideration,
+    d.gics_sector, d.deal_attitude,
     d.timeline_days, d.actual_completion_date,
     d.date_expected_close_parsed, d.deal_outcome,
     pa.ticker as acquirer_ticker, pa.company_name as acquirer_name,
