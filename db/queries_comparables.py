@@ -10,7 +10,7 @@ LEFT JOIN deal_samr_antitrust samr ON d.deal_pk = samr.deal_pk
 LEFT JOIN deal_cma_antitrust cma ON d.deal_pk = cma.deal_pk
 LEFT JOIN deal_cfius cfius ON d.deal_pk = cfius.deal_pk
 LEFT JOIN deal_competitive_analysis dca ON d.deal_pk = dca.deal_pk
-LEFT JOIN deal_terminations dt ON d.deal_pk = dt.deal_pk
+LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
 LEFT JOIN deal_regulatory_efforts dre ON d.deal_pk = dre.deal_pk
 """
 
@@ -29,7 +29,8 @@ _REGULATORY_COLUMNS = """
     dca.combined_market_share_pct, dca.hhi_delta,
     dca.target_lists_acquirer_competitor, dca.acquirer_lists_target_competitor,
     dca.remedy_feasibility, dca.second_request_received,
-    dt.outside_date, dt.extended_outside_date,
+    dma.long_stop_date AS outside_date,
+    dma.extended_long_stop_date AS extended_outside_date,
     dre.efforts_standard, dre.divestiture_commitment, dre.litigation_commitment,
     dre.required_approvals
 """

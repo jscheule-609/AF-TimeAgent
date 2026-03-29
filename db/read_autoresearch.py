@@ -138,10 +138,10 @@ async def load_merger_terms_from_mars(
     deal_pk: int,
 ) -> Optional[ParsedMergerAgreement]:
     """Load merger agreement data from deal_dma_terms + break_fees +
-    deal_regulatory_efforts + deal_terminations.
+    deal_regulatory_efforts.
 
-    Returns None if neither deal_dma_terms nor deal_terminations
-    exists (autoresearch has not yet profiled this deal).
+    Returns None if no deal_dma_terms row exists (autoresearch
+    has not yet profiled this deal).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -149,13 +149,7 @@ async def load_merger_terms_from_mars(
             "SELECT * FROM deal_dma_terms WHERE deal_pk = $1",
             deal_pk,
         )
-        terminations = await conn.fetchrow(
-            "SELECT outside_date, extended_outside_date "
-            "FROM deal_terminations WHERE deal_pk = $1",
-            deal_pk,
-        )
-
-        if not dma and not terminations:
+        if not dma:
             return None
 
         fees = await conn.fetch(
@@ -180,17 +174,10 @@ async def load_merger_terms_from_mars(
         elif "acquirer" in party or "reverse" in fee_type:
             reverse_fee = amount
 
-    # Parse outside date — check deal_dma_terms first,
-    # then deal_terminations as fallback
-    outside_date = (
-        (dma["long_stop_date"] if dma else None)
-        or (terminations["outside_date"] if terminations else None)
-    )
-    extended_outside_date = (
-        terminations["extended_outside_date"]
-        if terminations else None
-    )
-    extensions = (dma["long_stop_extensions"] or 0) if dma else 0
+    # Parse outside date from deal_dma_terms
+    outside_date = dma["long_stop_date"]
+    extended_outside_date = dma.get("extended_long_stop_date")
+    extensions = dma["long_stop_extensions"] or 0
     extension_desc = []
     if outside_date and extensions > 0:
         if not extended_outside_date:
@@ -245,12 +232,8 @@ async def load_merger_terms_from_mars(
         extended_outside_date=extended_outside_date,
         target_termination_fee_usd=target_fee,
         reverse_termination_fee_usd=reverse_fee,
-        has_ticking_fee=bool(
-            dma["ticking_fee_present"] if dma else False
-        ),
-        ticking_fee_details=(
-            dma["ticking_fee_details"] if dma else None
-        ),
+        has_ticking_fee=bool(dma["ticking_fee_present"]),
+        ticking_fee_details=dma["ticking_fee_details"],
         divestiture_commitment=divestiture_commitment,
         litigation_commitment=litigation_commitment,
     )
@@ -275,8 +258,7 @@ async def load_press_release_data_from_mars(
                 d.date_announced,
                 d.date_expected_close,
                 d.date_expected_close_parsed,
-                COALESCE(dma.long_stop_date,
-                         dt.outside_date) AS outside_date,
+                dma.long_stop_date AS outside_date,
                 da.is_hsr_applicable,
                 ec.is_ec_approval_required,
                 cma.is_cma_approval_required,
@@ -285,8 +267,6 @@ async def load_press_release_data_from_mars(
             FROM deals d
             LEFT JOIN deal_dma_terms dma
                 ON d.deal_pk = dma.deal_pk
-            LEFT JOIN deal_terminations dt
-                ON d.deal_pk = dt.deal_pk
             LEFT JOIN deal_antitrust da
                 ON d.deal_pk = da.deal_pk
             LEFT JOIN deal_ec_antitrust ec
