@@ -17,8 +17,8 @@ async def parse_deal_press_release(
 ) -> PressReleaseData:
     """Find and parse the deal announcement press release."""
     try:
-        from sec_api_tools import get_client
-        async with get_client() as client:
+        from sec_api_tools import EdgarClient
+        async with EdgarClient() as client:
             date_from = (
                 deal_params.announcement_date - timedelta(days=5)
             )

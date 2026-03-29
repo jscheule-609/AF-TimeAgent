@@ -81,9 +81,9 @@ async def _resolve_ticker(
     """Resolve a ticker to CIK and company name via AF-SECAPI."""
     try:
         from sec_api_tools import (
-            get_client, resolve_cik, get_company_info,
+            EdgarClient, resolve_cik, get_company_info,
         )
-        async with get_client() as client:
+        async with EdgarClient() as client:
             cik = await resolve_cik(ticker, client)
             if cik:
                 info = await get_company_info(cik, client)

@@ -1,7 +1,15 @@
 """Prediction storage and retrieval queries."""
 import json
+from datetime import date, datetime
 from typing import Optional
 from db.connection import get_pool
+
+
+def _json_serial(obj):
+    """JSON serializer for date/datetime objects."""
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
 
 
 CREATE_PREDICTIONS_TABLE = """
@@ -75,14 +83,14 @@ async def store_prediction(prediction: dict) -> str:
             prediction.get("p75_close_date"),
             prediction.get("p90_close_date"),
             prediction.get("predicted_critical_path", ""),
-            json.dumps(prediction.get("predicted_scenarios", [])),
-            json.dumps(prediction.get("predicted_milestones", [])),
-            json.dumps(prediction.get("predicted_risk_flags", [])),
+            json.dumps(prediction.get("predicted_scenarios", []), default=_json_serial),
+            json.dumps(prediction.get("predicted_milestones", []), default=_json_serial),
+            json.dumps(prediction.get("predicted_risk_flags", []), default=_json_serial),
             prediction.get("overlap_type", ""),
             prediction.get("overlap_severity", ""),
             prediction.get("enforcement_regime", "normal"),
             prediction.get("comparable_deals_used", 0),
-            json.dumps(prediction.get("jurisdictions_modeled", [])),
+            json.dumps(prediction.get("jurisdictions_modeled", []), default=_json_serial),
             prediction.get("model_version", "0.1.0"),
         )
         return prediction["prediction_id"]

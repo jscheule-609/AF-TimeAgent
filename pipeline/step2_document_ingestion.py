@@ -70,9 +70,9 @@ async def _ingest_tenk(
     """Fetch and parse the most recent 10-K filed before cutoff."""
     try:
         from sec_api_tools import (
-            get_client, search_filings, get_filing_document,
+            EdgarClient, search_filings, get_filing_document,
         )
-        async with get_client() as client:
+        async with EdgarClient() as client:
             result = await search_filings(
                 client,
                 form_types=["10-K"],
@@ -108,8 +108,8 @@ async def _ingest_merger_agreement(
 ) -> ParsedMergerAgreement | None:
     """Find and parse the merger agreement."""
     try:
-        from sec_api_tools import get_client
-        async with get_client() as client:
+        from sec_api_tools import EdgarClient
+        async with EdgarClient() as client:
             # Priority: DEFM14A > S-4 > PREM14A
             for form_type in ["DEFM14A", "S-4", "PREM14A"]:
                 for cik in [
@@ -168,7 +168,7 @@ async def _find_merger_in_filing(
 
             for doc in index:
                 doc_type = (doc.get("type") or "").upper()
-                if "EX-2" in doc_type or "EX-10" in doc_type:
+                if doc_type.startswith("EX-2.") or doc_type.startswith("EX-10."):
                     doc_url = (
                         doc.get("url")
                         or doc.get("document_url")
@@ -226,7 +226,7 @@ async def _find_merger_in_8k(
 
             for doc in index:
                 doc_type = (doc.get("type") or "").upper()
-                if "EX-2" in doc_type or "EX-10" in doc_type:
+                if doc_type.startswith("EX-2.") or doc_type.startswith("EX-10."):
                     doc_url = (
                         doc.get("url")
                         or doc.get("document_url")
