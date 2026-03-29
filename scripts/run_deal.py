@@ -13,13 +13,37 @@ from db.connection import close_pool
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Deal Timing Estimation Tool")
-    parser.add_argument("--acquirer", required=True, help="Acquirer ticker symbol")
-    parser.add_argument("--target", required=True, help="Target ticker symbol")
-    parser.add_argument("--value", type=float, default=None, help="Deal value in USD")
-    parser.add_argument("--date", type=str, default=None, help="Announcement date (YYYY-MM-DD)")
-    parser.add_argument("--compact", action="store_true", help="Output compact format")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser = argparse.ArgumentParser(
+        description="Deal Timing Estimation Tool",
+    )
+    parser.add_argument(
+        "--acquirer", default="",
+        help="Acquirer ticker symbol",
+    )
+    parser.add_argument(
+        "--target", default="",
+        help="Target ticker symbol",
+    )
+    parser.add_argument(
+        "--deal-pk", type=int, default=None,
+        help="MARS deal_pk (skip ticker resolution)",
+    )
+    parser.add_argument(
+        "--value", type=float, default=None,
+        help="Deal value in USD",
+    )
+    parser.add_argument(
+        "--date", type=str, default=None,
+        help="Announcement date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--compact", action="store_true",
+        help="Output compact format",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Enable verbose logging",
+    )
 
     args = parser.parse_args()
 
@@ -36,8 +60,13 @@ def main():
         announcement_date = date.fromisoformat(args.date)
 
     deal_input = DealInput(
-        acquirer_ticker=args.acquirer.upper(),
-        target_ticker=args.target.upper(),
+        acquirer_ticker=(
+            args.acquirer.upper() if args.acquirer else ""
+        ),
+        target_ticker=(
+            args.target.upper() if args.target else ""
+        ),
+        deal_pk=args.deal_pk,
         deal_value_usd=args.value,
         announcement_date=announcement_date,
     )

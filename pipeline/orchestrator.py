@@ -98,7 +98,9 @@ async def run_timing_estimation(deal_input: DealInput) -> DealTimingReport:
     # ═══════════════════════════════════════════════════════
     try:
         regulatory_map = await map_jurisdictions(
-            tenk_acquirer, tenk_target, merger_agreement, comparable_groups
+            tenk_acquirer, tenk_target, merger_agreement,
+            comparable_groups,
+            mars_deal_pk=deal_params.mars_deal_pk,
         )
         logger.info(f"Jurisdictions mapped: {[r.jurisdiction for r in regulatory_map if r.is_required]}")
 

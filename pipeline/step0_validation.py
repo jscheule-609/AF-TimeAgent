@@ -19,7 +19,52 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
     errors = []
     warnings = []
 
-    # Step 1: Resolve CIKs via AF-SECAPI
+    # ── Path A: deal_pk provided → load from MARS directly ──
+    if deal_input.deal_pk:
+        from db.read_autoresearch import load_deal_params_from_mars
+        deal_params = await load_deal_params_from_mars(
+            deal_input.deal_pk
+        )
+        if deal_params is None:
+            errors.append(
+                f"deal_pk={deal_input.deal_pk} not found in MARS"
+            )
+            return ValidationResult(
+                is_valid=False, errors=errors
+            )
+
+        # Still resolve CIKs for 10-K fetching
+        acq_cik, _ = await _resolve_ticker(
+            deal_params.acquirer_ticker
+        )
+        tgt_cik, _ = await _resolve_ticker(
+            deal_params.target_ticker
+        )
+        if acq_cik:
+            deal_params.acquirer_cik = acq_cik
+        else:
+            warnings.append(
+                "Could not resolve acquirer CIK for "
+                f"{deal_params.acquirer_ticker}"
+            )
+        if tgt_cik:
+            deal_params.target_cik = tgt_cik
+        else:
+            warnings.append(
+                "Could not resolve target CIK for "
+                f"{deal_params.target_ticker}"
+            )
+
+        warnings.append(
+            "Deal loaded from MARS (autoresearch)"
+        )
+        return ValidationResult(
+            is_valid=True,
+            deal_params=deal_params,
+            warnings=warnings,
+        )
+
+    # ── Path B: tickers provided → SEC API + MARS lookup ──
     acquirer_cik, acquirer_name = await _resolve_ticker(
         deal_input.acquirer_ticker
     )
@@ -41,24 +86,26 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
     if errors:
         return ValidationResult(is_valid=False, errors=errors)
 
-    # Step 2: Check MARS database
+    # Check MARS database by tickers
     mars_deal = None
     try:
         mars_deal = await find_deal_by_tickers(
-            deal_input.acquirer_ticker, deal_input.target_ticker
+            deal_input.acquirer_ticker,
+            deal_input.target_ticker,
         )
     except Exception as e:
         logger.warning(f"MARS lookup failed: {e}")
         warnings.append(f"MARS database lookup failed: {e}")
 
-    # Step 3: Build DealParameters
     if mars_deal:
         deal_params = _build_from_mars(
             deal_input, mars_deal,
             acquirer_cik, acquirer_name,
             target_cik, target_name,
         )
-        if mars_deal.get("deal_outcome") in ("Completed", "Terminated"):
+        if mars_deal.get("deal_outcome") in (
+            "Completed", "Terminated",
+        ):
             warnings.append(
                 f"Deal is {mars_deal['deal_outcome']}. "
                 f"Producing forward estimate anyway."
@@ -68,10 +115,13 @@ async def validate_deal(deal_input: DealInput) -> ValidationResult:
             deal_input, acquirer_cik, acquirer_name,
             target_cik, target_name,
         )
-        warnings.append("Deal not found in MARS. Using EDGAR-only data.")
+        warnings.append(
+            "Deal not found in MARS. Using EDGAR-only data."
+        )
 
     return ValidationResult(
-        is_valid=True, deal_params=deal_params, warnings=warnings
+        is_valid=True, deal_params=deal_params,
+        warnings=warnings,
     )
 
 

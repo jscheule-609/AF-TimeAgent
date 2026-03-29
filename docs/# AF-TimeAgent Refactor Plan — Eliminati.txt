@@ -1,0 +1,407 @@
+# AF-TimeAgent Refactor Plan — Eliminating Redundancy with Autoresearch
+
+> Analysis of AF-TimeAgent in light of the completed AF-ARB_AUTORESEARCH pipeline.
+> Goal: Remove duplicate research/extraction, maximize MARS database reads,
+> establish a clean handoff contract between the two systems.
+
+---
+
+## Current State: What Each System Does
+
+### AF-ARB_AUTORESEARCH (just built)
+- Triggered by SEC filing URL
+- Fetches 8-K + merger agreement (Exhibit 2.1) + press release (Exhibit 99.1)
+- 72-field extraction via three-tier LLM routing (Gemini/DeepSeek/Sonnet)
+- Writes to MARS across 8 tables: deals, parties, deal_antitrust, break_fees,
+  deal_advisors, deal_shareholder_vote, deal_ec_antitrust, deal_dma_terms
+- ~90 seconds, ~$0.08/deal, 85-89% field completeness
+
+### AF-TimeAgent (existing)
+- Triggered by acquirer/target tickers
+- 7-step linear pipeline: validation → document ingestion → comparables →
+  antitrust overlap → jurisdiction mapping → state machine simulation → timeline
+- Fetches its own 8-Ks, 10-Ks, merger agreements from EDGAR
+- Runs LLM extraction on press releases, 10-Ks, merger agreements
+- Queries MARS for comparable deals, regulatory history, enforcement climate
+- Outputs P50/P75/P90 close dates with probability distributions
+
+---
+
+## Redundancy Analysis
+
+### 1. SEC Filing Fetching (HIGH redundancy)
+
+| Operation | Autoresearch | TimeAgent |
+|-----------|-------------|-----------|
+| 8-K fetch | Yes (trigger) | Yes (step 1) |
+| Press release extraction | Yes (Exhibit 99.1) | Yes (step 1, LLM prompt) |
+| Merger agreement fetch | Yes (Exhibit 2.1, articles I/II/V/VI/VII) | Yes (step 2, DEFM14A/S-4/8-K) |
+| 10-K fetch (acquirer) | No | Yes (step 2) |
+| 10-K fetch (target) | No | Yes (step 2) |
+
+**Action:** TimeAgent should NOT re-fetch 8-K, press release, or merger agreement.
+These are already in MARS (written by autoresearch). TimeAgent should read from
+the database or receive pre-extracted data.
+
+**Exception:** 10-K fetching is unique to TimeAgent (geographic segments, business
+description, competitors). Keep this in TimeAgent but cache results in MARS.
+
+### 2. Company Data Resolution (MEDIUM redundancy)
+
+| Operation | Autoresearch | TimeAgent |
+|-----------|-------------|-----------|
+| Ticker → CIK | Not yet (uses URL) | Yes (SEC API) |
+| Company name | From filing | From MARS + SEC API |
+| Industry/sector | From LLM extraction | From MARS |
+
+**Action:** Once autoresearch writes to MARS, TimeAgent reads acquirer/target
+from the `parties` table (ticker, company_name) and `deals` table (industry).
+No SEC API ticker resolution needed.
+
+### 3. Deal Term Extraction (HIGH redundancy)
+
+Both systems extract from the merger agreement:
+
+| Field | Autoresearch | TimeAgent |
+|-------|-------------|-----------|
+| Deal value | Yes → deals.deal_value_usd | Yes (DealParameters) |
+| Consideration type | Yes → deals.type_of_consideration | Yes |
+| Outside date | Yes → deal_dma_terms.long_stop_date | Yes (merger agreement extraction) |
+| Efforts standard | No (not in field registry) | Yes |
+| Filing deadlines | No | Yes (per-jurisdiction) |
+| Termination fees | Yes → break_fees | Yes (from merger agreement) |
+| HSR required | Yes → deal_antitrust | Yes |
+| EC required | Yes → deal_ec_antitrust | Yes |
+| CFIUS required | Yes (field) | Yes |
+
+**Action:** TimeAgent should read deal terms from MARS tables written by
+autoresearch. Only extract fields that autoresearch doesn't cover:
+- **Efforts standard** (hell-or-high-water, reasonable best efforts, etc.)
+- **Per-jurisdiction filing deadlines** (specific contractual dates)
+- **Divestiture/litigation commitments** (from merger agreement)
+
+### 4. Antitrust/Regulatory Analysis (LOW redundancy)
+
+| Operation | Autoresearch | TimeAgent |
+|-----------|-------------|-----------|
+| HSR required/filing date | Basic extraction | Full state machine simulation |
+| EC required | Boolean only | Phase 1/2 probability modeling |
+| Second request risk | Qualitative ("Low") | Quantitative (3-65% calibrated) |
+| Comparable deals | Not implemented | Full 3-group comparable engine |
+| Enforcement climate | Not implemented | 24-month rolling assessment |
+| State machine simulation | Not implemented | 6 jurisdiction-specific machines |
+
+**Action:** No redundancy here. TimeAgent's regulatory analysis is fundamentally
+different from autoresearch's field extraction. Autoresearch answers "what are the
+facts?" — TimeAgent answers "what do the facts mean for timing?"
+
+### 5. LLM Usage (MEDIUM redundancy)
+
+| Task | Autoresearch | TimeAgent |
+|------|-------------|-----------|
+| Press release extraction | Gemini Flash Lite | Gemini 2.5 Flash |
+| 10-K extraction | Not done | Gemini 2.5 Flash |
+| Merger agreement extraction | Gemini Flash Lite | Gemini 2.5 Flash |
+| Antitrust overlap assessment | DeepSeek Chat | Gemini 2.5 Flash |
+| Regulatory risk judgment | Sonnet 4 | Not done (uses state machine) |
+
+**Action:** Eliminate duplicate press release and merger agreement LLM calls.
+TimeAgent should consume autoresearch's extracted fields, not re-parse documents.
+
+---
+
+## Proposed Refactored Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    EDGAR FILING EVENT                         │
+│  (8-K, DEFM14A, SC TO-T, press release)                     │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│              AF-ARB_AUTORESEARCH                             │
+│  1. Fetch 8-K + merger agreement + press release             │
+│  2. Extract 72 fields (3-tier LLM routing)                   │
+│  3. Write to MARS: deals, parties, deal_antitrust,           │
+│     break_fees, deal_advisors, deal_dma_terms, etc.          │
+│  4. Generate deal_profile.json                               │
+└───────────────────────┬─────────────────────────────────────┘
+                        │ (deal_pk written to MARS)
+                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│              AF-TimeAgent (REFACTORED)                        │
+│                                                              │
+│  Step 0: Read deal from MARS (by deal_pk or tickers)         │
+│          - Skip SEC API resolution                           │
+│          - Skip press release fetch                          │
+│          - Skip merger agreement fetch                       │
+│          - Read: deals, parties, deal_antitrust,             │
+│            deal_dma_terms, break_fees                         │
+│                                                              │
+│  Step 1: 10-K Ingestion (KEEP — unique to TimeAgent)         │
+│          - Acquirer + target 10-Ks for geographic segments   │
+│          - Business description, competitors                 │
+│          - Cache results in MARS for future runs             │
+│                                                              │
+│  Step 2: Skip merger agreement parsing (read from MARS)      │
+│          - Outside date → deal_dma_terms.long_stop_date      │
+│          - Efforts standard → deal_regulatory_efforts        │
+│          - Filing deadlines → infer from deal_dma_terms      │
+│          ONLY parse merger agreement if:                     │
+│          - deal_regulatory_efforts is empty (not yet loaded) │
+│          - Per-jurisdiction deadlines are needed              │
+│                                                              │
+│  Step 3: Comparable Deals (KEEP — unchanged)                 │
+│          - Queries MARS: acquirer history, sector, size      │
+│                                                              │
+│  Step 4: Antitrust Overlap (KEEP — but prefer DB read)       │
+│          - Priority: MARS competitive_analysis table first   │
+│          - Fallback: 10-K LLM extraction (already done)      │
+│          - Skip if autoresearch populated divestiture_risk    │
+│                                                              │
+│  Step 5: Jurisdiction Mapping (KEEP — enhanced)              │
+│          - Read from deal_antitrust, deal_ec_antitrust,      │
+│            deal_cfius instead of re-determining               │
+│          - Only run threshold analysis for unknown juris.     │
+│                                                              │
+│  Step 5.5: State Machine Simulation (KEEP — core value)      │
+│  Step 6: Timeline Assembly (KEEP)                            │
+│  Step 7: Prediction Logging (KEEP)                           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Specific Code Changes
+
+### 1. New: `step0_validation.py` — Read from MARS first
+
+```python
+async def validate_and_enrich(deal_input: DealInput, pool) -> DealParameters:
+    """
+    REFACTORED: Try to load from MARS first (autoresearch data).
+    Only fall back to SEC API if deal not found.
+    """
+    # Try by deal_pk if provided
+    if deal_input.deal_pk:
+        deal = await load_deal_from_mars(deal_input.deal_pk, pool)
+        if deal:
+            return enrich_from_mars(deal, pool)
+
+    # Try by tickers
+    deal = await find_deal_by_tickers(
+        deal_input.acquirer_ticker, deal_input.target_ticker, pool
+    )
+    if deal:
+        return enrich_from_mars(deal, pool)
+
+    # Fallback: SEC API resolution (cold start, no autoresearch data)
+    return await resolve_from_sec_api(deal_input, pool)
+```
+
+### 2. Modified: `step1_press_release.py` — Skip if data exists
+
+```python
+async def get_press_release_data(params: DealParameters, pool) -> PressReleaseData:
+    """
+    REFACTORED: Check if autoresearch already extracted press release data.
+    Only fetch from EDGAR if missing.
+    """
+    # Check if key timing fields already populated from autoresearch
+    if params.expected_close_date and params.outside_date:
+        return PressReleaseData(
+            stated_close_timeline=params.expected_close_date,
+            jurisdictions_mentioned=params.regulatory_jurisdictions or [],
+            source="autoresearch (MARS database)",
+        )
+
+    # Fallback: fetch and parse press release from EDGAR
+    return await _fetch_and_parse_press_release(params)
+```
+
+### 3. Modified: `step2_document_ingestion.py` — Split responsibilities
+
+```python
+async def ingest_documents(params, pool):
+    """
+    REFACTORED:
+    - 10-K fetching: KEEP (unique to TimeAgent)
+    - Merger agreement: READ FROM MARS (autoresearch already extracted)
+    """
+    # 10-Ks — still fetch (TimeAgent needs geographic segments, competitors)
+    acq_10k = await fetch_and_parse_10k(params.acquirer_cik, ...)
+    tgt_10k = await fetch_and_parse_10k(params.target_cik, ...)
+
+    # Merger agreement — read from MARS instead of re-fetching
+    merger_data = await read_merger_terms_from_mars(params.deal_pk, pool)
+    if not merger_data:
+        # Fallback: fetch from EDGAR (deal not yet in MARS)
+        merger_data = await _fetch_and_parse_merger_agreement(params)
+
+    return acq_10k, tgt_10k, merger_data
+```
+
+### 4. New: `db/read_autoresearch.py` — MARS data reader
+
+```python
+async def read_merger_terms_from_mars(deal_pk: int, pool) -> ParsedMergerAgreement:
+    """Read merger agreement data from MARS tables populated by autoresearch."""
+    async with pool.acquire() as conn:
+        # Read from deal_dma_terms
+        dma = await conn.fetchrow(
+            "SELECT * FROM deal_dma_terms WHERE deal_pk = $1", deal_pk
+        )
+        # Read from break_fees
+        fees = await conn.fetch(
+            "SELECT * FROM break_fees WHERE deal_pk = $1", deal_pk
+        )
+        # Read from deal_regulatory_efforts
+        efforts = await conn.fetchrow(
+            "SELECT * FROM deal_regulatory_efforts WHERE deal_pk = $1", deal_pk
+        )
+
+        if not dma:
+            return None
+
+        return ParsedMergerAgreement(
+            outside_date=dma["long_stop_date"],
+            outside_date_extensions=dma["long_stop_extensions"],
+            efforts_standard=efforts["efforts_standard"] if efforts else None,
+            specific_performance=dma["specific_performance_available"],
+            target_termination_fee=...,  # from break_fees
+            reverse_termination_fee=...,  # from break_fees
+            ...
+        )
+```
+
+### 5. Modified: `step5_regulatory_map.py` — Use MARS regulatory data
+
+```python
+async def determine_jurisdictions(params, pool, ...):
+    """
+    REFACTORED: Read autoresearch's regulatory determinations first.
+    Only run threshold analysis for jurisdictions not yet determined.
+    """
+    known = {}
+
+    # Read from autoresearch-populated tables
+    antitrust = await conn.fetchrow(
+        "SELECT * FROM deal_antitrust WHERE deal_pk = $1", params.deal_pk
+    )
+    if antitrust and antitrust["is_hsr_applicable"] is not None:
+        known["HSR"] = antitrust["is_hsr_applicable"]
+
+    ec = await conn.fetchrow(
+        "SELECT * FROM deal_ec_antitrust WHERE deal_pk = $1", params.deal_pk
+    )
+    if ec and ec["is_ec_approval_required"] is not None:
+        known["EC"] = ec["is_ec_approval_required"]
+
+    # Only run threshold/comparable analysis for unknown jurisdictions
+    unknown = [j for j in ALL_JURISDICTIONS if j not in known]
+    if unknown:
+        threshold_results = await _analyze_thresholds(params, unknown)
+        known.update(threshold_results)
+
+    return known
+```
+
+---
+
+## New Fields to Add to Autoresearch (for TimeAgent consumption)
+
+These fields exist in the merger agreement but aren't in autoresearch's
+current 72-field FIELD_REGISTRY. Adding them would eliminate TimeAgent's
+need to parse the merger agreement at all:
+
+```python
+# Add to FIELD_REGISTRY:
+"efforts_standard":        {"category": "provisions",  "weight_class": "important", "type": "str"},
+    # "hell-or-high-water", "reasonable best efforts", "commercially reasonable"
+"divestiture_commitment":  {"category": "provisions",  "weight_class": "important", "type": "str"},
+    # "unlimited", "limited", "none"
+"litigation_commitment":   {"category": "provisions",  "weight_class": "standard",  "type": "str"},
+    # "required to litigate", "best efforts to avoid", "none"
+"required_approvals_list": {"category": "regulatory",  "weight_class": "important", "type": "list"},
+    # ["HSR", "EC", "CMA", "CFIUS"] — explicit list from merger agreement
+"filing_deadline_hsr":     {"category": "reg_timing",  "weight_class": "standard",  "type": "str"},
+"filing_deadline_ec":      {"category": "reg_timing",  "weight_class": "standard",  "type": "str"},
+```
+
+---
+
+## Estimated Impact
+
+| Metric | Before Refactor | After Refactor |
+|--------|----------------|----------------|
+| SEC API calls per deal | ~8-12 (autoresearch) + ~8-12 (TimeAgent) = ~20 | ~8-12 (autoresearch) + ~2-4 (TimeAgent 10-K only) = ~14 |
+| LLM calls per deal | ~10-13 (autoresearch) + ~4-6 (TimeAgent) = ~16 | ~10-13 (autoresearch) + ~2 (TimeAgent 10-K only) = ~14 |
+| LLM cost per deal | ~$0.08 + ~$0.05 = ~$0.13 | ~$0.08 + ~$0.02 = ~$0.10 |
+| Total pipeline time | ~90s + ~60s = ~150s sequential | ~90s + ~30s = ~120s (or ~100s with warm cache) |
+| Data consistency | Two independent extractions may disagree | Single source of truth (MARS) |
+
+---
+
+## Implementation Priority
+
+1. **HIGH: `step0_validation.py`** — Read from MARS by deal_pk or tickers
+   (eliminates SEC API ticker resolution for all autoresearch-profiled deals)
+
+2. **HIGH: `step2_document_ingestion.py`** — Read merger terms from MARS
+   (eliminates merger agreement re-fetch and LLM re-extraction)
+
+3. **HIGH: `step5_regulatory_map.py`** — Read regulatory flags from MARS
+   (eliminates duplicate jurisdiction determination)
+
+4. **MEDIUM: `step1_press_release.py`** — Skip if timing fields populated
+   (eliminates press release re-fetch)
+
+5. **MEDIUM: Add 6 new fields to autoresearch FIELD_REGISTRY**
+   (efforts_standard, divestiture_commitment, etc. — eliminates TimeAgent's
+   need to parse merger agreement entirely)
+
+6. **LOW: `step4_antitrust.py`** — Prefer MARS competitive_analysis read
+   (already implemented as priority source, just needs autoresearch to populate)
+
+---
+
+## Handoff Contract
+
+The formal contract between autoresearch and TimeAgent:
+
+```python
+# TimeAgent receives a deal_pk after autoresearch completes
+# All data is read from MARS — no JSON file passing
+
+class AutoresearchHandoff:
+    deal_pk: int                    # Primary key in MARS
+    deal_id: str                    # Autoresearch session ID
+    completeness_score: float       # 0.0-1.0
+    fields_populated: int           # Count of non-null fields
+    trigger_source: str             # SEC filing URL
+    converged: bool                 # True if score >= 85%
+
+    # TimeAgent reads everything else from MARS tables:
+    # - deals (deal terms, value, structure, dates)
+    # - parties (acquirer/target names, tickers)
+    # - deal_antitrust (HSR data)
+    # - deal_ec_antitrust (EC data)
+    # - deal_dma_terms (outside date, MAC, specific performance)
+    # - break_fees (termination fees)
+    # - deal_advisors (financial/legal advisors)
+```
+
+---
+
+## Migration Path
+
+1. Deploy autoresearch as-is (done — working on VPS)
+2. Add `deal_pk` return to autoresearch convergence output (done — logged in audit_log)
+3. Modify TimeAgent step0 to accept `deal_pk` input
+4. Modify TimeAgent step2 to read merger terms from MARS
+5. Modify TimeAgent step5 to read regulatory flags from MARS
+6. Add efforts_standard + filing deadline fields to autoresearch FIELD_REGISTRY
+7. Remove TimeAgent's merger agreement fetching (step2 becomes 10-K only)
+8. Deploy refactored TimeAgent
+9. Wire trigger: autoresearch convergence → TimeAgent launch (via deal_pk)

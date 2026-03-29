@@ -17,9 +17,37 @@ async def map_jurisdictions(
     tenk_target: ParsedTenK | None,
     merger_agreement: ParsedMergerAgreement | None,
     comparable_groups: list[ComparableGroup],
+    mars_deal_pk: int | None = None,
 ) -> list[JurisdictionRequirement]:
     """Determine which jurisdictions are required for this deal."""
     requirements = {}
+
+    # 0. MARS regulatory flags — autoresearch-determined
+    if mars_deal_pk:
+        try:
+            from db.read_autoresearch import (
+                load_regulatory_flags_from_mars,
+            )
+            mars_flags = await load_regulatory_flags_from_mars(
+                mars_deal_pk
+            )
+            for jur, is_required in mars_flags.items():
+                requirements[jur] = JurisdictionRequirement(
+                    jurisdiction=jur,
+                    is_required=is_required,
+                    confidence=1.0,
+                    source="mars_autoresearch",
+                    notes="Determined by autoresearch",
+                )
+            if mars_flags:
+                logger.info(
+                    "MARS regulatory flags: "
+                    f"{mars_flags}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"MARS regulatory flags load failed: {e}"
+            )
 
     # 1. Merger agreement — highest confidence
     if merger_agreement:

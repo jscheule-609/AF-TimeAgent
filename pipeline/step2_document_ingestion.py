@@ -37,7 +37,9 @@ async def ingest_documents(
         deal_params.target_name,
         filed_before=cutoff,
     )
-    merger_task = _ingest_merger_agreement(deal_params)
+    merger_task = _ingest_merger_with_mars_fallback(
+        deal_params
+    )
 
     tenk_acquirer, tenk_target, merger = await asyncio.gather(
         tenk_acquirer_task, tenk_target_task, merger_task,
@@ -101,6 +103,32 @@ async def _ingest_tenk(
     except Exception as e:
         logger.error(f"10-K ingestion failed for {ticker}: {e}")
         return None
+
+
+async def _ingest_merger_with_mars_fallback(
+    deal_params: DealParameters,
+) -> ParsedMergerAgreement | None:
+    """Try MARS first for merger terms, fall back to EDGAR."""
+    if deal_params.mars_deal_pk:
+        try:
+            from db.read_autoresearch import (
+                load_merger_terms_from_mars,
+            )
+            mars_merger = await load_merger_terms_from_mars(
+                deal_params.mars_deal_pk
+            )
+            if mars_merger:
+                logger.info(
+                    "Merger agreement terms loaded from MARS "
+                    "(autoresearch)"
+                )
+                return mars_merger
+        except Exception as e:
+            logger.warning(
+                f"MARS merger terms load failed: {e}"
+            )
+
+    return await _ingest_merger_agreement(deal_params)
 
 
 async def _ingest_merger_agreement(

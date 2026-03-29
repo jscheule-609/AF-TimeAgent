@@ -16,6 +16,29 @@ async def parse_deal_press_release(
     deal_params: DealParameters,
 ) -> PressReleaseData:
     """Find and parse the deal announcement press release."""
+
+    # Try MARS first if deal is known
+    if deal_params.mars_deal_pk:
+        try:
+            from db.read_autoresearch import (
+                load_press_release_data_from_mars,
+            )
+            mars_data = await load_press_release_data_from_mars(
+                deal_params.mars_deal_pk
+            )
+            if mars_data and mars_data.mentioned_jurisdictions:
+                logger.info(
+                    "Press release data loaded from MARS "
+                    "(autoresearch)"
+                )
+                return mars_data
+        except Exception as e:
+            logger.warning(
+                "MARS press release load failed, "
+                f"falling back to EDGAR: {e}"
+            )
+
+    # Fallback: fetch from EDGAR
     try:
         from sec_api_tools import EdgarClient
         async with EdgarClient() as client:

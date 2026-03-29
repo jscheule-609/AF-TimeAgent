@@ -94,6 +94,7 @@ async def run_backtest_deal(
     regulatory_map = await map_jurisdictions(
         tenk_acquirer, tenk_target,
         merger_agreement, comparable_groups,
+        mars_deal_pk=None,  # Backtest: no MARS shortcuts
     )
 
     simulation = await simulate_regulatory_paths(

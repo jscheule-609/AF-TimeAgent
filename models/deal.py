@@ -1,5 +1,5 @@
 """Core deal data models."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from datetime import date
 from enum import Enum
@@ -20,10 +20,22 @@ class BuyerType(str, Enum):
 
 class DealInput(BaseModel):
     """User-provided input to kick off the tool."""
-    acquirer_ticker: str
-    target_ticker: str
+    acquirer_ticker: str = ""
+    target_ticker: str = ""
+    deal_pk: Optional[int] = None
     deal_value_usd: Optional[float] = None
     announcement_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def check_input_provided(self) -> "DealInput":
+        has_pk = self.deal_pk is not None
+        has_tickers = bool(self.acquirer_ticker and self.target_ticker)
+        if not has_pk and not has_tickers:
+            raise ValueError(
+                "Either deal_pk or both acquirer_ticker and "
+                "target_ticker must be provided"
+            )
+        return self
 
 
 class DealParameters(BaseModel):
