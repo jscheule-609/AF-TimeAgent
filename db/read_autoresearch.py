@@ -19,6 +19,19 @@ from models.documents import ParsedMergerAgreement, PressReleaseData
 
 logger = logging.getLogger(__name__)
 
+# Map autoresearch approval names to TimeAgent jurisdiction codes
+_APPROVAL_MAP = {
+    "hsr": "HSR", "hsr act": "HSR",
+    "hart-scott-rodino": "HSR",
+    "doj": "HSR", "ftc": "HSR",  # same regulatory process
+    "european commission": "EC", "ec": "EC",
+    "eu merger regulation": "EC",
+    "cma": "CMA", "competition and markets authority": "CMA",
+    "samr": "SAMR",
+    "state administration for market regulation": "SAMR",
+    "cfius": "CFIUS", "accc": "ACCC",
+}
+
 
 # ------------------------------------------------------------------
 # DealParameters from MARS
@@ -85,6 +98,23 @@ async def load_deal_params_from_mars(
     )
 
 
+def _normalize_approvals(raw: list[str]) -> list[str]:
+    """Normalize autoresearch approval names to jurisdiction codes.
+    Deduplicates (e.g. DOJ + FTC + HSR all map to HSR)."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in raw:
+        mapped = _APPROVAL_MAP.get(name.lower().strip())
+        if mapped and mapped not in seen:
+            seen.add(mapped)
+            result.append(mapped)
+        elif not mapped and name.upper() not in seen:
+            # Keep unknown approvals as-is (e.g. "SEC")
+            seen.add(name.upper())
+            result.append(name.upper())
+    return result
+
+
 def _map_consideration(
     consideration: str | None,
     structure_type: str | None,
@@ -108,10 +138,10 @@ async def load_merger_terms_from_mars(
     deal_pk: int,
 ) -> Optional[ParsedMergerAgreement]:
     """Load merger agreement data from deal_dma_terms + break_fees +
-    deal_regulatory_efforts.
+    deal_regulatory_efforts + deal_terminations.
 
-    Returns None if no deal_dma_terms row exists (autoresearch
-    has not yet extracted the merger agreement for this deal).
+    Returns None if neither deal_dma_terms nor deal_terminations
+    exists (autoresearch has not yet profiled this deal).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -119,7 +149,13 @@ async def load_merger_terms_from_mars(
             "SELECT * FROM deal_dma_terms WHERE deal_pk = $1",
             deal_pk,
         )
-        if not dma:
+        terminations = await conn.fetchrow(
+            "SELECT outside_date, extended_outside_date "
+            "FROM deal_terminations WHERE deal_pk = $1",
+            deal_pk,
+        )
+
+        if not dma and not terminations:
             return None
 
         fees = await conn.fetch(
@@ -144,15 +180,24 @@ async def load_merger_terms_from_mars(
         elif "acquirer" in party or "reverse" in fee_type:
             reverse_fee = amount
 
-    # Parse outside date + extensions
-    outside_date = dma["long_stop_date"]
-    extensions = dma["long_stop_extensions"] or 0
-    extended_outside_date = None
+    # Parse outside date — check deal_dma_terms first,
+    # then deal_terminations as fallback
+    outside_date = (
+        (dma["long_stop_date"] if dma else None)
+        or (terminations["outside_date"] if terminations else None)
+    )
+    extended_outside_date = (
+        terminations["extended_outside_date"]
+        if terminations else None
+    )
+    extensions = (dma["long_stop_extensions"] or 0) if dma else 0
     extension_desc = []
     if outside_date and extensions > 0:
-        extended_outside_date = (
-            outside_date + relativedelta(months=extensions)
-        )
+        if not extended_outside_date:
+            extended_outside_date = (
+                outside_date
+                + relativedelta(months=extensions)
+            )
         extension_desc = [
             f"{extensions}-month extension available"
         ]
@@ -168,17 +213,19 @@ async def load_merger_terms_from_mars(
             efforts["efforts_standard"] or "unknown"
         )
         raw_approvals = efforts["required_approvals"]
-        if isinstance(raw_approvals, list):
-            required_approvals = raw_approvals
-        elif isinstance(raw_approvals, str):
+        if isinstance(raw_approvals, str):
             try:
-                parsed = json.loads(raw_approvals)
-                if isinstance(parsed, list):
-                    required_approvals = parsed
+                raw_approvals = json.loads(raw_approvals)
             except (json.JSONDecodeError, TypeError):
-                required_approvals = [raw_approvals]
+                raw_approvals = [raw_approvals]
+        if isinstance(raw_approvals, list):
+            required_approvals = _normalize_approvals(
+                raw_approvals
+            )
         elif raw_approvals:
-            required_approvals = list(raw_approvals)
+            required_approvals = _normalize_approvals(
+                list(raw_approvals)
+            )
         if efforts["divestiture_commitment"]:
             divestiture_commitment = (
                 efforts["divestiture_cap"]
@@ -198,8 +245,12 @@ async def load_merger_terms_from_mars(
         extended_outside_date=extended_outside_date,
         target_termination_fee_usd=target_fee,
         reverse_termination_fee_usd=reverse_fee,
-        has_ticking_fee=bool(dma["ticking_fee_present"]),
-        ticking_fee_details=dma["ticking_fee_details"],
+        has_ticking_fee=bool(
+            dma["ticking_fee_present"] if dma else False
+        ),
+        ticking_fee_details=(
+            dma["ticking_fee_details"] if dma else None
+        ),
         divestiture_commitment=divestiture_commitment,
         litigation_commitment=litigation_commitment,
     )
@@ -224,7 +275,8 @@ async def load_press_release_data_from_mars(
                 d.date_announced,
                 d.date_expected_close,
                 d.date_expected_close_parsed,
-                dma.long_stop_date,
+                COALESCE(dma.long_stop_date,
+                         dt.outside_date) AS outside_date,
                 da.is_hsr_applicable,
                 ec.is_ec_approval_required,
                 cma.is_cma_approval_required,
@@ -233,6 +285,8 @@ async def load_press_release_data_from_mars(
             FROM deals d
             LEFT JOIN deal_dma_terms dma
                 ON d.deal_pk = dma.deal_pk
+            LEFT JOIN deal_terminations dt
+                ON d.deal_pk = dt.deal_pk
             LEFT JOIN deal_antitrust da
                 ON d.deal_pk = da.deal_pk
             LEFT JOIN deal_ec_antitrust ec
@@ -265,8 +319,8 @@ async def load_press_release_data_from_mars(
         jurisdictions.append("SAMR")
 
     outside_str = None
-    if row["long_stop_date"]:
-        outside_str = str(row["long_stop_date"])
+    if row["outside_date"]:
+        outside_str = str(row["outside_date"])
 
     return PressReleaseData(
         announcement_date=row["date_announced"],

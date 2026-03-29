@@ -77,7 +77,7 @@ async def _ingest_tenk(
         async with EdgarClient() as client:
             result = await search_filings(
                 client,
-                form_types=["10-K"],
+                form_types=["10-K", "20-F", "10-K/A"],
                 cik=cik,
                 date_to=filed_before,
                 max_results=3,
