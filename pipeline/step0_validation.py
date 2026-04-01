@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 from models.deal import (
     DealInput, DealParameters, DealStructure,
-    BuyerType, ValidationResult,
+    BuyerType, ValidationResult, classify_buyer_type,
 )
 from db.queries_comparables import find_deal_by_tickers
 
@@ -159,13 +159,7 @@ def _build_from_mars(
     else:
         structure = DealStructure.CASH
 
-    acq_type = (mars.get("acquirer_type") or "").lower()
-    if "pe" in acq_type or "sponsor" in acq_type:
-        buyer_type = BuyerType.PE_SPONSOR
-    elif "financial" in acq_type:
-        buyer_type = BuyerType.FINANCIAL
-    else:
-        buyer_type = BuyerType.STRATEGIC
+    buyer_type = classify_buyer_type(mars.get("acquirer_name") or acq_name)
 
     return DealParameters(
         acquirer_ticker=deal_input.acquirer_ticker,

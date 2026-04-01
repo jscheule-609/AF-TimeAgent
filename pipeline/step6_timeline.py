@@ -27,8 +27,12 @@ async def assemble_timeline(
     # Build milestone rows
     milestones = _build_milestones(simulation, merger_agreement, announcement)
 
-    # Build scenario paths
+    # Build scenario paths (use joint cross-jurisdiction builder if available)
+    from output.scenario_builder import build_joint_scenarios
     scenarios = _build_scenarios(simulation, announcement)
+    joint = build_joint_scenarios(simulation, announcement)
+    if joint:
+        scenarios = joint
 
     # Build risk flags
     risk_flags = _build_risk_flags(simulation, merger_agreement)

@@ -13,7 +13,7 @@ from typing import Optional
 
 from db.connection import get_pool
 from models.deal import (
-    DealParameters, DealStructure, BuyerType,
+    DealParameters, DealStructure, BuyerType, classify_buyer_type,
 )
 from models.documents import ParsedMergerAgreement, PressReleaseData
 
@@ -85,7 +85,7 @@ async def load_deal_params_from_mars(
             row["type_of_consideration"],
             row["deal_structure_type"],
         ),
-        buyer_type=BuyerType.STRATEGIC,
+        buyer_type=classify_buyer_type(row["acquirer_name"]),
         announcement_date=(
             row["date_announced"] or date.today()
         ),

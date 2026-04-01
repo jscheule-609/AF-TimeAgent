@@ -18,6 +18,26 @@ class BuyerType(str, Enum):
     PE_SPONSOR = "pe_sponsor"
 
 
+_PE_KEYWORDS = {
+    "capital", "partners", "equity", "fund", "investment", "holdings",
+    "ventures", "advisors", "management", "acquisition corp", "sponsor",
+}
+
+
+def classify_buyer_type(acquirer_name: str | None) -> BuyerType:
+    """Heuristic classification of buyer type from acquirer name.
+
+    PE/sponsor firms typically include keywords like 'Capital', 'Partners',
+    etc. Used when MARS lacks an explicit acquirer_type column.
+    """
+    if not acquirer_name:
+        return BuyerType.STRATEGIC
+    name_lower = acquirer_name.lower()
+    if any(kw in name_lower for kw in _PE_KEYWORDS):
+        return BuyerType.PE_SPONSOR
+    return BuyerType.STRATEGIC
+
+
 class DealInput(BaseModel):
     """User-provided input to kick off the tool."""
     acquirer_ticker: str = ""

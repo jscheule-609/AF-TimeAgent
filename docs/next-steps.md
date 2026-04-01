@@ -1,12 +1,12 @@
 # AF-TimeAgent: Next Steps
 
-Status as of 2026-03-26 after first end-to-end backtest run (PANW/CYBR).
+Status as of 2026-04-01 (updated from 2026-03-26 after audit fix pass).
 
 ---
 
 ## P0 — Blocking: Pipeline produces garbage without these
 
-### 1. Fix document fetching (`step1_press_release.py`, `step2_document_ingestion.py`)
+### 1. [RESOLVED] Fix document fetching (`step1_press_release.py`, `step2_document_ingestion.py`)
 
 **Problem:** `get_filing_document()` from `sec_api_tools` requires an `EdgarClient` passed as the `client` parameter, but internally it validates the client was opened as an async context manager. The sub-functions (`_find_press_release`, `_find_merger_in_filing`, `_find_merger_in_8k`) receive a `client` from the parent scope but `get_filing_document` and `get_filing_index` fail with:
 
@@ -29,7 +29,7 @@ EdgarClient must be used as an async context manager: async with EdgarClient() a
 
 ---
 
-### 2. Fix MARS comparables queries (`db/queries_comparables.py`)
+### 2. [RESOLVED] Fix MARS comparables queries (`db/queries_comparables.py`)
 
 **Problem:** The comparables queries reference columns that don't exist in the MARS `deals` table:
 - `d.acquirer_type` — does not exist
@@ -98,14 +98,17 @@ Failed to store prediction: Object of type date is not JSON serializable
 
 ---
 
-### 6. Wire up the external antitrust tool interface
+### 6. [RESOLVED] Wire up the external antitrust tool interface
 
-**Problem:** Step 4 was refactored to accept `external_signals` and `external_overlap` parameters instead of doing its own web search. The `_build_from_external()` function referenced in the new code needs to be implemented.
+**Resolved 2026-04-01:** `_build_from_external()` was already implemented.
+`orchestrator.run_timing_estimation()` now accepts `external_signals` and
+`external_overlap` kwargs and passes them through to `assess_antitrust_overlap()`.
+Backtest runner left as-is (backtests don't use external data).
 
 **Files:**
-- `pipeline/step4_antitrust.py` — implement `_build_from_external()`
-- `pipeline/orchestrator.py` — thread external signals through to `assess_antitrust_overlap()`
-- `pipeline/backtest_runner.py` — same
+- `pipeline/step4_antitrust.py` — `_build_from_external()` already implemented
+- `pipeline/orchestrator.py` — external signals now threaded through
+- `pipeline/backtest_runner.py` — unchanged (external=None for backtests)
 
 ---
 

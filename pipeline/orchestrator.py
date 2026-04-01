@@ -28,7 +28,11 @@ class PipelineError(Exception):
         super().__init__(f"Pipeline failed at {step}: {message}")
 
 
-async def run_timing_estimation(deal_input: DealInput) -> DealTimingReport:
+async def run_timing_estimation(
+    deal_input: DealInput,
+    external_signals: list[str] | None = None,
+    external_overlap: dict | None = None,
+) -> DealTimingReport:
     """
     Main entry point. Runs the full pipeline.
 
@@ -80,7 +84,11 @@ async def run_timing_estimation(deal_input: DealInput) -> DealTimingReport:
     # ═══════════════════════════════════════════════════════
     try:
         overlap_assessment, comparable_groups = await asyncio.gather(
-            assess_antitrust_overlap(tenk_acquirer, tenk_target, deal_params.mars_deal_pk),
+            assess_antitrust_overlap(
+                tenk_acquirer, tenk_target, deal_params.mars_deal_pk,
+                external_signals=external_signals,
+                external_overlap=external_overlap,
+            ),
             find_comparables(deal_params, tenk_acquirer, tenk_target, merger_agreement),
         )
     except Exception as e:

@@ -151,7 +151,9 @@ def compute_similarity_score(
     features["regulatory_climate_proximity"] = score_regulatory_climate_proximity(
         deal_params.announcement_date, comp.announcement_date, half_life_months
     )
-    features["cross_border_match"] = 1.0  # Default — enriched when cross_border data available
+    deal_cross = bool(deal_jurisdictions and any(j != "HSR" for j in deal_jurisdictions))
+    comp_cross = bool(comp.jurisdictions_required and any(j != "HSR" for j in comp.jurisdictions_required))
+    features["cross_border_match"] = 1.0 if deal_cross == comp_cross else 0.5
 
     # Weighted sum
     total = sum(features.get(k, 0.0) * w.get(k, 0.0) for k in w)

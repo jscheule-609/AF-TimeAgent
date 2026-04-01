@@ -6,7 +6,7 @@ Queries MARS for 3 groups of comparables, enriches with regulatory data, scores.
 import logging
 import numpy as np
 from datetime import date
-from models.deal import DealParameters
+from models.deal import DealParameters, classify_buyer_type
 from models.documents import ParsedTenK, ParsedMergerAgreement
 from models.comparables import ComparableDeal, ComparableGroup, ComparableSource, RegulatoryMilestone
 from models.antitrust import OverlapAssessment
@@ -120,7 +120,7 @@ def _row_to_comparable(row: dict, source: ComparableSource) -> ComparableDeal:
         industry=row.get("industry", ""),
         deal_value_usd=row.get("deal_value_usd"),
         deal_structure=row.get("type_of_consideration") or "cash",
-        buyer_type=row.get("acquirer_type") or "strategic",
+        buyer_type=classify_buyer_type(row.get("acquirer_name")).value,
         announcement_date=row.get("date_announced", date.today()),
         close_date=row.get("actual_completion_date"),
         timeline_days=row.get("timeline_days"),

@@ -1,7 +1,7 @@
 """Tests for the scoring engine."""
 import pytest
 from datetime import date
-from models.deal import DealParameters, DealStructure, BuyerType
+from models.deal import DealParameters, DealStructure, BuyerType, classify_buyer_type
 from models.antitrust import OverlapAssessment
 from models.comparables import ComparableDeal, ComparableSource
 from scoring.similarity import compute_similarity_score
@@ -106,3 +106,42 @@ class TestTimeWeighting:
 
     def test_time_weight_negative_months(self):
         assert compute_time_weight(-5, 24) == 1.0
+
+
+class TestBuyerTypeClassification:
+    def test_pe_keywords(self):
+        assert classify_buyer_type("Apollo Global Management") == BuyerType.PE_SPONSOR
+        assert classify_buyer_type("Thoma Bravo Capital Partners") == BuyerType.PE_SPONSOR
+        assert classify_buyer_type("Silver Lake Partners") == BuyerType.PE_SPONSOR
+        assert classify_buyer_type("KKR & Co Investment Holdings") == BuyerType.PE_SPONSOR
+
+    def test_strategic(self):
+        assert classify_buyer_type("Microsoft Corporation") == BuyerType.STRATEGIC
+        assert classify_buyer_type("Broadcom Inc.") == BuyerType.STRATEGIC
+
+    def test_none_defaults_strategic(self):
+        assert classify_buyer_type(None) == BuyerType.STRATEGIC
+        assert classify_buyer_type("") == BuyerType.STRATEGIC
+
+
+class TestCrossBorderScoring:
+    def test_both_cross_border(self):
+        deal = _make_deal_params()
+        overlap = OverlapAssessment()
+        comp = _make_comparable(jurisdictions_required=["HSR", "EC"])
+        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR", "EC"})
+        assert feats["cross_border_match"] == 1.0
+
+    def test_both_domestic(self):
+        deal = _make_deal_params()
+        overlap = OverlapAssessment()
+        comp = _make_comparable(jurisdictions_required=["HSR"])
+        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR"})
+        assert feats["cross_border_match"] == 1.0
+
+    def test_mismatch(self):
+        deal = _make_deal_params()
+        overlap = OverlapAssessment()
+        comp = _make_comparable(jurisdictions_required=["HSR", "EC"])
+        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR"})
+        assert feats["cross_border_match"] == 0.5
