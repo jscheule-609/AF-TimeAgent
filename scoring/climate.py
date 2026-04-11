@@ -5,12 +5,15 @@ from config.constants import ENFORCEMENT_REGIMES
 from db.queries_climate import get_enforcement_stats, get_sector_enforcement_intensity
 
 
-# Historical baseline rates (approximate averages over 2015-2023)
+# Historical baseline rates (approximate averages over 2015-2023).
+# These are INTENTIONALLY different from the current calibrated state-machine
+# defaults (0.095, 0.03, 0.05).  The regime classifier compares current
+# observed rates against these historical norms to detect enforcement shifts.
 HISTORICAL_BASELINES = {
-    "hsr_second_request_rate": 0.03,  # ~3% of HSR filings get 2nd request
-    "ec_phase_2_rate": 0.05,          # ~5% of EC filings go to Phase 2
-    "cma_phase_2_rate": 0.10,         # ~10% of CMA Phase 1 cases referred
-    "litigation_rate": 0.01,          # ~1% of deals face antitrust litigation
+    "hsr_second_request_rate": 0.03,  # ~3% long-run HSR 2nd-request average
+    "ec_phase_2_rate": 0.05,          # ~5% long-run EC Phase 2 average
+    "cma_phase_2_rate": 0.10,         # ~10% long-run CMA Phase 2 referral average
+    "litigation_rate": 0.01,          # ~1% antitrust litigation rate
 }
 
 

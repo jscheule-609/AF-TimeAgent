@@ -36,7 +36,7 @@ class TestHSRStateMachine:
             announcement_date=date(2024, 3, 1),
             overlap=_no_overlap(),
             climate=_default_climate(),
-            comparable_stats={"second_request_rate": 0.03},
+            comparable_stats={"second_request_rate": 0.095},
         )
         assert sim.jurisdiction.value == "HSR"
         assert len(sim.possible_paths) > 0
@@ -65,13 +65,13 @@ class TestHSRStateMachine:
             announcement_date=date(2024, 3, 1),
             overlap=_no_overlap(),
             climate=_default_climate(),
-            comparable_stats={"second_request_rate": 0.03},
+            comparable_stats={"second_request_rate": 0.095},
         )
         sim_high = machine.simulate(
             announcement_date=date(2024, 3, 1),
             overlap=_high_overlap(),
             climate=_default_climate(),
-            comparable_stats={"second_request_rate": 0.03},
+            comparable_stats={"second_request_rate": 0.095},
         )
 
         # High overlap should result in longer expected duration
@@ -107,7 +107,7 @@ class TestCMAStateMachine:
             announcement_date=date(2024, 3, 1),
             overlap=_no_overlap(),
             climate=_default_climate(),
-            comparable_stats={"cma_phase_2_rate": 0.10},
+            comparable_stats={"cma_phase_2_rate": 0.05},
         )
         clear_paths = [p for p in sim.possible_paths if "phase_1_cleared" in p.states]
         assert len(clear_paths) > 0

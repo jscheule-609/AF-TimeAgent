@@ -16,6 +16,8 @@ def _make_deal_params(**overrides) -> DealParameters:
         target_ticker="VMW",
         target_name="VMware",
         target_cik="0001124610",
+        acquirer_country="US",
+        target_country="US",
         deal_value_usd=69_000_000_000,
         deal_structure=DealStructure.MIXED,
         buyer_type=BuyerType.STRATEGIC,
@@ -31,6 +33,7 @@ def _make_comparable(**overrides) -> ComparableDeal:
     defaults = dict(
         deal_pk=1, deal_id="D001", acquirer="Intel", target="Altera",
         sector="Technology", industry="Semiconductors",
+        acquirer_country="US", target_country="US",
         deal_value_usd=16_700_000_000, deal_structure="cash",
         buyer_type="strategic", announcement_date=date(2023, 6, 1),
         deal_outcome="Closed", source=ComparableSource.SECTOR_MATCH,
@@ -123,25 +126,43 @@ class TestBuyerTypeClassification:
         assert classify_buyer_type(None) == BuyerType.STRATEGIC
         assert classify_buyer_type("") == BuyerType.STRATEGIC
 
+    def test_party_type_lp_overrides(self):
+        # LP entity type → PE even when name has no PE keywords
+        assert classify_buyer_type("TPG Inc.", party_type="lp") == BuyerType.PE_SPONSOR
+        assert classify_buyer_type("Hellman & Friedman", party_type="lp") == BuyerType.PE_SPONSOR
+
+    def test_party_type_llc_overrides(self):
+        assert classify_buyer_type("Some Holdings", party_type="llc") == BuyerType.PE_SPONSOR
+
+    def test_party_type_corporation_falls_through(self):
+        # Corporation falls through to name heuristic
+        assert classify_buyer_type("Microsoft Corporation", party_type="corporation") == BuyerType.STRATEGIC
+        assert classify_buyer_type("Apollo Capital Partners", party_type="corporation") == BuyerType.PE_SPONSOR
+
+    def test_party_type_none_uses_keyword_fallback(self):
+        # No party_type → existing keyword heuristic
+        assert classify_buyer_type("Apollo Global Management", party_type=None) == BuyerType.PE_SPONSOR
+        assert classify_buyer_type("TPG Inc.", party_type=None) == BuyerType.STRATEGIC
+
 
 class TestCrossBorderScoring:
     def test_both_cross_border(self):
-        deal = _make_deal_params()
+        deal = _make_deal_params(acquirer_country="US", target_country="DE")
         overlap = OverlapAssessment()
-        comp = _make_comparable(jurisdictions_required=["HSR", "EC"])
-        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR", "EC"})
+        comp = _make_comparable(acquirer_country="US", target_country="DE")
+        _, feats = compute_similarity_score(deal, overlap, comp, set())
         assert feats["cross_border_match"] == 1.0
 
     def test_both_domestic(self):
-        deal = _make_deal_params()
+        deal = _make_deal_params(acquirer_country="US", target_country="US")
         overlap = OverlapAssessment()
-        comp = _make_comparable(jurisdictions_required=["HSR"])
-        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR"})
+        comp = _make_comparable(acquirer_country="US", target_country="US")
+        _, feats = compute_similarity_score(deal, overlap, comp, set())
         assert feats["cross_border_match"] == 1.0
 
     def test_mismatch(self):
-        deal = _make_deal_params()
+        deal = _make_deal_params(acquirer_country="US", target_country="DE")
         overlap = OverlapAssessment()
-        comp = _make_comparable(jurisdictions_required=["HSR", "EC"])
-        _, feats = compute_similarity_score(deal, overlap, comp, {"HSR"})
+        comp = _make_comparable(acquirer_country="US", target_country="US")
+        _, feats = compute_similarity_score(deal, overlap, comp, set())
         assert feats["cross_border_match"] == 0.5

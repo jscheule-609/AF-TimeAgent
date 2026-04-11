@@ -39,10 +39,19 @@ _BASE_DEAL_COLUMNS = """
     d.deal_pk, d.deal_id, d.deal_status, d.date_announced,
     d.deal_value_usd, d.industry, d.type_of_consideration,
     d.gics_sector, d.deal_attitude,
+    d.acquirer_country, d.target_country,
     d.timeline_days, d.actual_completion_date,
     d.date_expected_close_parsed, d.deal_outcome,
     pa.ticker as acquirer_ticker, pa.company_name as acquirer_name,
-    pt.ticker as target_ticker, pt.company_name as target_name
+    pt.ticker as target_ticker, pt.company_name as target_name,
+    pe_acq.party_type as acquirer_party_type
+"""
+
+_PARTY_ENTITY_JOINS = """
+LEFT JOIN deal_parties dp_acq
+    ON d.deal_pk = dp_acq.deal_pk AND dp_acq.role_type = 'acquirer'
+LEFT JOIN party_entities pe_acq
+    ON dp_acq.party_id = pe_acq.party_id
 """
 
 
@@ -56,6 +65,7 @@ async def find_deal_by_tickers(acquirer_ticker: str, target_ticker: str) -> Opti
             FROM deals d
             JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
+            {_PARTY_ENTITY_JOINS}
             WHERE pa.ticker = $1 AND pt.ticker = $2
             ORDER BY d.date_announced DESC LIMIT 1
             """,
@@ -75,6 +85,7 @@ async def get_acquirer_prior_deals(acquirer_name: str, limit: int = 15) -> list[
             JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
+            {_PARTY_ENTITY_JOINS}
             WHERE pa.company_name ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
             ORDER BY d.date_announced DESC
@@ -98,6 +109,7 @@ async def get_sector_comparable_deals(
             JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
+            {_PARTY_ENTITY_JOINS}
             WHERE d.industry = $1
               AND d.date_announced >= NOW() - ($2 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
@@ -124,6 +136,7 @@ async def get_size_matched_deals(
             JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
+            {_PARTY_ENTITY_JOINS}
             WHERE d.deal_value_usd BETWEEN $1 AND $2
               AND d.date_announced >= NOW() - ($3 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')

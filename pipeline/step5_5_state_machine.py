@@ -118,9 +118,9 @@ async def simulate_regulatory_paths(
 def _aggregate_comparable_stats(groups: list[ComparableGroup]) -> dict:
     """Aggregate jurisdiction-level stats across all comparable groups."""
     stats = {
-        "second_request_rate": 0.03,
-        "ec_phase_2_rate": 0.05,
-        "cma_phase_2_rate": 0.10,
+        "second_request_rate": 0.095,
+        "ec_phase_2_rate": 0.03,
+        "cma_phase_2_rate": 0.05,
         "hsr_median_days_to_clear": 35,
     }
 

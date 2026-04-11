@@ -151,9 +151,37 @@ def compute_similarity_score(
     features["regulatory_climate_proximity"] = score_regulatory_climate_proximity(
         deal_params.announcement_date, comp.announcement_date, half_life_months
     )
-    deal_cross = bool(deal_jurisdictions and any(j != "HSR" for j in deal_jurisdictions))
-    comp_cross = bool(comp.jurisdictions_required and any(j != "HSR" for j in comp.jurisdictions_required))
-    features["cross_border_match"] = 1.0 if deal_cross == comp_cross else 0.5
+    # Cross-border match — prefer explicit country data, fall back to jurisdictions
+    def _is_cross_border_country(acq: str | None, tgt: str | None) -> bool | None:
+        if not acq or not tgt:
+            return None
+        return acq.upper() != tgt.upper()
+
+    def _is_cross_border_jur(jurs: set[str] | list[str]) -> bool | None:
+        if not jurs:
+            return None
+        # Any non-HSR approval implies cross-border / multi-jurisdictional review
+        iterable = jurs if isinstance(jurs, set) else set(jurs)
+        return any(j != "HSR" for j in iterable)
+
+    deal_cross = _is_cross_border_country(
+        getattr(deal_params, "acquirer_country", None),
+        getattr(deal_params, "target_country", None),
+    )
+    comp_cross = _is_cross_border_country(
+        getattr(comp, "acquirer_country", None),
+        getattr(comp, "target_country", None),
+    )
+
+    if deal_cross is None:
+        deal_cross = _is_cross_border_jur(deal_jurisdictions)
+    if comp_cross is None:
+        comp_cross = _is_cross_border_jur(comp.jurisdictions_required)
+
+    if deal_cross is None or comp_cross is None:
+        features["cross_border_match"] = 0.5
+    else:
+        features["cross_border_match"] = 1.0 if deal_cross == comp_cross else 0.5
 
     # Weighted sum
     total = sum(features.get(k, 0.0) * w.get(k, 0.0) for k in w)

@@ -84,8 +84,11 @@ class HSRStateMachine(BaseRegulatoryStateMachine):
         climate: RegulatoryClimate,
         comparable_stats: dict,
     ) -> list[StateTransition]:
-        # Base second request probability
-        base_2r = comparable_stats.get("second_request_rate", 0.03)
+        # Base second request probability.
+        # Default calibrated from MARS via scripts/calibration_report.py.
+        # As of 2026-04-11 the observed rate across closed, HSR-applicable
+        # deals is ~9.5%, so the fallback is set to 0.095 rather than 0.03.
+        base_2r = comparable_stats.get("second_request_rate", 0.095)
 
         # Adjustments
         adjustments = {}

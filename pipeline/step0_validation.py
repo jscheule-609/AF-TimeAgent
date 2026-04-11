@@ -159,7 +159,10 @@ def _build_from_mars(
     else:
         structure = DealStructure.CASH
 
-    buyer_type = classify_buyer_type(mars.get("acquirer_name") or acq_name)
+    buyer_type = classify_buyer_type(
+        mars.get("acquirer_name") or acq_name,
+        party_type=mars.get("acquirer_party_type"),
+    )
 
     return DealParameters(
         acquirer_ticker=deal_input.acquirer_ticker,
@@ -168,6 +171,8 @@ def _build_from_mars(
         target_ticker=deal_input.target_ticker,
         target_name=mars.get("target_name", tgt_name),
         target_cik=tgt_cik,
+        acquirer_country=mars.get("acquirer_country"),
+        target_country=mars.get("target_country"),
         deal_value_usd=(
             deal_input.deal_value_usd
             or mars.get("deal_value_usd", 0)
@@ -202,7 +207,7 @@ def _build_from_input(
         target_cik=tgt_cik,
         deal_value_usd=deal_input.deal_value_usd or 0.0,
         deal_structure=DealStructure.CASH,
-        buyer_type=BuyerType.STRATEGIC,
+        buyer_type=classify_buyer_type(acq_name or deal_input.acquirer_ticker, party_type=None),
         announcement_date=deal_input.announcement_date or date.today(),
         sector="",
         industry="",

@@ -24,12 +24,22 @@ _PE_KEYWORDS = {
 }
 
 
-def classify_buyer_type(acquirer_name: str | None) -> BuyerType:
-    """Heuristic classification of buyer type from acquirer name.
+def classify_buyer_type(
+    acquirer_name: str | None,
+    party_type: str | None = None,
+) -> BuyerType:
+    """Classify buyer type using party_type from MARS v2 (preferred)
+    or name-based keyword heuristic (fallback).
 
-    PE/sponsor firms typically include keywords like 'Capital', 'Partners',
-    etc. Used when MARS lacks an explicit acquirer_type column.
+    party_type values from party_entities: corporation, llc, lp,
+    government_entity, regulatory_body.  LP and LLC structures are
+    strong indicators of PE/sponsor vehicles.
     """
+    if party_type:
+        pt = party_type.lower().strip()
+        if pt in ("lp", "llc"):
+            return BuyerType.PE_SPONSOR
+
     if not acquirer_name:
         return BuyerType.STRATEGIC
     name_lower = acquirer_name.lower()
@@ -66,6 +76,8 @@ class DealParameters(BaseModel):
     target_ticker: str
     target_name: str
     target_cik: str
+    acquirer_country: Optional[str] = None
+    target_country: Optional[str] = None
     deal_value_usd: float
     deal_structure: DealStructure
     buyer_type: BuyerType

@@ -46,7 +46,12 @@ class CMAStateMachine(BaseRegulatoryStateMachine):
     def define_transitions(
         self, overlap: OverlapAssessment, climate: RegulatoryClimate, comparable_stats: dict,
     ) -> list[StateTransition]:
-        base_p2 = comparable_stats.get("cma_phase_2_rate", 0.10)
+        # Base Phase 2 referral probability.
+        # Current MARS data shows no Phase 2 outcomes in the calibration
+        # sample; the fallback is therefore reduced from 0.10 to 0.05 to
+        # better reflect observed UK CMA behavior while preserving a
+        # conservative non-zero rate.
+        base_p2 = comparable_stats.get("cma_phase_2_rate", 0.05)
         adj_p2 = base_p2
         adjustments = {}
 

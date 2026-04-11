@@ -21,3 +21,9 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration (may be slow or require external services)",
+    "requires_network: tests that require live network/SEC access",
+]

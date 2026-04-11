@@ -55,16 +55,22 @@ async def load_deal_params_from_mars(
                 d.deal_value_usd, d.type_of_consideration,
                 d.deal_structure_type,
                 d.date_announced, d.date_expected_close_parsed,
+                d.acquirer_country, d.target_country,
                 d.industry, d.gics_sector, d.deal_attitude,
                 pa.ticker  AS acquirer_ticker,
                 pa.company_name AS acquirer_name,
                 pt.ticker  AS target_ticker,
-                pt.company_name AS target_name
+                pt.company_name AS target_name,
+                pe_acq.party_type AS acquirer_party_type
             FROM deals d
             LEFT JOIN parties pa
                 ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             LEFT JOIN parties pt
                 ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
+            LEFT JOIN deal_parties dp_acq
+                ON d.deal_pk = dp_acq.deal_pk AND dp_acq.role_type = 'acquirer'
+            LEFT JOIN party_entities pe_acq
+                ON dp_acq.party_id = pe_acq.party_id
             WHERE d.deal_pk = $1
             """,
             deal_pk,
@@ -80,12 +86,17 @@ async def load_deal_params_from_mars(
         target_ticker=row["target_ticker"] or "",
         target_name=row["target_name"] or "",
         target_cik="",
+        acquirer_country=row["acquirer_country"],
+        target_country=row["target_country"],
         deal_value_usd=float(row["deal_value_usd"] or 0),
         deal_structure=_map_consideration(
             row["type_of_consideration"],
             row["deal_structure_type"],
         ),
-        buyer_type=classify_buyer_type(row["acquirer_name"]),
+        buyer_type=classify_buyer_type(
+            row["acquirer_name"],
+            party_type=row["acquirer_party_type"],
+        ),
         announcement_date=(
             row["date_announced"] or date.today()
         ),

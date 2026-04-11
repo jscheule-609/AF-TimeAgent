@@ -25,6 +25,8 @@ class ComparableDeal(BaseModel):
     deal_id: str
     acquirer: str
     target: str
+    acquirer_country: Optional[str] = None
+    target_country: Optional[str] = None
     sector: str
     industry: str
     deal_value_usd: Optional[float] = None

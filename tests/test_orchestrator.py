@@ -5,6 +5,7 @@ from models.deal import DealInput
 
 
 @pytest.mark.integration
+@pytest.mark.requires_network
 @pytest.mark.asyncio
 async def test_full_pipeline_avgo_vmw():
     """

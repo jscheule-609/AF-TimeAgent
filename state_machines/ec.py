@@ -66,8 +66,12 @@ class ECStateMachine(BaseRegulatoryStateMachine):
     def define_transitions(
         self, overlap: OverlapAssessment, climate: RegulatoryClimate, comparable_stats: dict,
     ) -> list[StateTransition]:
-        # Base Phase 2 probability
-        base_p2 = comparable_stats.get("ec_phase_2_rate", 0.05)
+        # Base Phase 2 probability.
+        # Calibration against current MARS data (scripts/calibration_report.py)
+        # shows essentially zero observed Phase 2 openings in the sample.
+        # To avoid over-stating risk while still leaving a non-zero tail, the
+        # fallback is reduced from 0.05 to 0.03.
+        base_p2 = comparable_stats.get("ec_phase_2_rate", 0.03)
 
         adjustments = {}
         adj_p2 = base_p2
