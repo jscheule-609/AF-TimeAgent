@@ -203,3 +203,43 @@ def parse_guidance(
         )
 
     return (None, None)
+
+
+# ── DMA close gap parser ────────────────────────────────
+
+_ORDINAL_MAP = {
+    "second": 2, "2nd": 2,
+    "third": 3, "3rd": 3,
+    "fourth": 4, "4th": 4,
+    "fifth": 5, "5th": 5,
+    "sixth": 6, "6th": 6,
+    "seventh": 7, "7th": 7,
+    "tenth": 10, "10th": 10,
+}
+
+
+def parse_dma_close_gap_days(dma_text: Optional[str]) -> int:
+    """Parse the business-day gap between all conditions
+    satisfied and closing from DMA text.
+
+    Examples:
+      "third Business Day after..." → 3
+      "fifth (5th) Business Day..." → 5
+      "no later than the 3rd Business Day" → 3
+
+    Returns 3 as default (most common in M&A).
+    """
+    if not dma_text:
+        return 3
+
+    pattern = "|".join(re.escape(k) for k in _ORDINAL_MAP)
+    m = re.search(
+        rf"({pattern})\s*(?:\([^)]*\)\s*)?business\s*day",
+        dma_text,
+        re.IGNORECASE,
+    )
+    if m:
+        return _ORDINAL_MAP.get(m.group(1).lower(), 3)
+    return 3
+
+    return (None, None)

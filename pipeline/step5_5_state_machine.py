@@ -86,6 +86,7 @@ async def simulate_regulatory_paths(
             sim.is_required = req.is_required
             sim.confidence_required = req.confidence
             sim.source_of_requirement = req.source
+            sim.jurisdiction_label = req.jurisdiction
             simulations.append(sim)
         except Exception as e:
             logger.error(f"Simulation failed for {req.jurisdiction}: {e}")

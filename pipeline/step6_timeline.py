@@ -36,6 +36,7 @@ async def assemble_timeline(
     deal_params: DealParameters,
     timeline_stats: dict | None = None,
     guidance_anchor: date | None = None,
+    dma_close_gap: int = 3,
 ) -> DealTimingReport:
     """Assemble the final timeline report.
 
@@ -148,7 +149,17 @@ async def assemble_timeline(
 
     milestones = _build_milestones(
         simulation, merger_agreement, announcement, ts,
+        dma_close_gap=dma_close_gap,
     )
+
+    # Sync Expected Close milestone with guidance-adjusted
+    # P50/P75/P90 (guidance anchor may have shifted them)
+    for ms in milestones:
+        if ms.milestone == "Expected Close":
+            ms.base_case_date = p50_date
+            ms.extended_case_date = p75_date
+            ms.stress_case_date = p90_date
+            break
 
     # ── Scenarios ────────────────────────────────────────
 
@@ -203,30 +214,71 @@ def _build_milestones(
     merger_agreement: ParsedMergerAgreement | None,
     announcement: date,
     timeline_stats: dict | None = None,
+    dma_close_gap: int = 3,
 ) -> list[MilestoneRow]:
-    """Build milestone rows from simulation + empirical data."""
+    """Build full milestone timeline from simulation + empirical
+    data + DMA provisions.
+
+    Milestone sequence for a typical merger:
+      1. Antitrust filings (HSR, EC, SAMR, PUCs...)
+      2. Preliminary Proxy / S-4 Filed
+      3. Antitrust clearances
+      4. Definitive Proxy Mailed
+      5. Shareholder Vote
+      6. Expected Close (last condition + DMA gap)
+    """
     milestones = []
     ts = timeline_stats or {}
 
-    # Use empirical filing timing if available
-    filing_p50 = _ts_val(ts, "announcement_to_filing", "p50")
-    filing_p75 = _ts_val(ts, "announcement_to_filing", "p75")
-    filing_p90 = _ts_val(ts, "announcement_to_filing", "p90")
+    # ── Efforts standard multiplier ──────────────────────
+    efforts = ""
+    if merger_agreement:
+        efforts = (
+            merger_agreement.efforts_standard or ""
+        ).lower()
+    if "hell" in efforts or "best" in efforts:
+        filing_mult = 0.85
+    elif "reasonable" in efforts:
+        filing_mult = 1.0
+    else:
+        filing_mult = 1.1
+
+    # ── Empirical timing defaults ────────────────────────
+    emp_filing_p50 = _ts_val(ts, "announcement_to_filing", "p50") or 15
+    emp_filing_p75 = _ts_val(ts, "announcement_to_filing", "p75") or 25
+    emp_filing_p90 = _ts_val(ts, "announcement_to_filing", "p90") or 40
+    emp_clear_p50 = _ts_val(ts, "filing_to_clearance", "p50") or 30
+    emp_clear_p75 = _ts_val(ts, "filing_to_clearance", "p75") or 60
+    emp_clear_p90 = _ts_val(ts, "filing_to_clearance", "p90") or 90
+
+    # ── 1. Antitrust / regulatory filings ────────────────
+    latest_clear_p50 = 0
+    latest_clear_p75 = 0
+    latest_clear_p90 = 0
 
     for jur_sim in simulation.jurisdictions:
-        jur_name = jur_sim.jurisdiction.value
-        contractual = (
-            jur_sim.contractual_filing_deadline_days or None
+        # Use jurisdiction_label (actual name) not enum
+        jur_label = (
+            jur_sim.jurisdiction_label
+            or jur_sim.jurisdiction.value
         )
 
-        # Filing milestone — empirical or contractual
-        f_p50 = int(filing_p50 or contractual or 10)
-        f_p75 = int(filing_p75 or contractual or 15)
-        f_p90 = int(filing_p90 or contractual or 20)
+        # Filing date: DMA contractual deadline > empirical
+        contractual = (
+            jur_sim.contractual_filing_deadline_days
+        )
+        if contractual:
+            f_p50 = contractual
+            f_p75 = contractual
+            f_p90 = contractual
+        else:
+            f_p50 = int(emp_filing_p50 * filing_mult)
+            f_p75 = int(emp_filing_p75 * filing_mult)
+            f_p90 = int(emp_filing_p90 * filing_mult)
 
         milestones.append(MilestoneRow(
-            milestone=f"{jur_name} Filing",
-            jurisdiction=jur_name,
+            milestone=f"{jur_label} Filing",
+            jurisdiction=jur_label,
             contractual_deadline=(
                 jur_sim.contractual_filing_deadline
             ),
@@ -239,23 +291,35 @@ def _build_milestones(
             stress_case_date=(
                 announcement + timedelta(days=f_p90)
             ),
+            notes=(
+                f"DMA: {efforts}" if efforts else ""
+            ),
         ))
 
-        # Clearance milestone
-        clear_p50 = jur_sim.expected_duration_days_p50
-        clear_p75 = jur_sim.expected_duration_days_p75
-        clear_p90 = jur_sim.expected_duration_days_p90
+        # Clearance date: filing + review duration
+        c_p50 = f_p50 + int(emp_clear_p50)
+        c_p75 = f_p75 + int(emp_clear_p75)
+        c_p90 = f_p90 + int(emp_clear_p90)
+
+        # Use state machine duration if longer
+        sm_p50 = jur_sim.expected_duration_days_p50
+        sm_p75 = jur_sim.expected_duration_days_p75
+        sm_p90 = jur_sim.expected_duration_days_p90
+        c_p50 = max(c_p50, sm_p50)
+        c_p75 = max(c_p75, sm_p75)
+        c_p90 = max(c_p90, sm_p90)
+
         milestones.append(MilestoneRow(
-            milestone=f"{jur_name} Clearance",
-            jurisdiction=jur_name,
+            milestone=f"{jur_label} Clearance",
+            jurisdiction=jur_label,
             base_case_date=(
-                announcement + timedelta(days=clear_p50)
+                announcement + timedelta(days=c_p50)
             ),
             extended_case_date=(
-                announcement + timedelta(days=clear_p75)
+                announcement + timedelta(days=c_p75)
             ),
             stress_case_date=(
-                announcement + timedelta(days=clear_p90)
+                announcement + timedelta(days=c_p90)
             ),
             risk_flags=[
                 p.path_label
@@ -265,36 +329,104 @@ def _build_milestones(
             ],
         ))
 
-    # Shareholder Vote milestone (empirical)
-    vote_p50 = _ts_val(ts, "announcement_to_vote", "p50")
-    if vote_p50:
-        vote_p75 = _ts_val(ts, "announcement_to_vote", "p75")
-        vote_p90 = _ts_val(ts, "announcement_to_vote", "p90")
-        milestones.append(MilestoneRow(
-            milestone="Shareholder Vote",
-            jurisdiction="SEC",
-            base_case_date=(
-                announcement + timedelta(days=int(vote_p50))
-            ),
-            extended_case_date=(
-                announcement + timedelta(days=int(vote_p75))
-            ),
-            stress_case_date=(
-                announcement + timedelta(days=int(vote_p90))
-            ),
-        ))
+        latest_clear_p50 = max(latest_clear_p50, c_p50)
+        latest_clear_p75 = max(latest_clear_p75, c_p75)
+        latest_clear_p90 = max(latest_clear_p90, c_p90)
 
-    # Expected Close milestone
-    total_p50 = _ts_val(ts, "announcement_to_close", "p50")
-    total_p75 = _ts_val(ts, "announcement_to_close", "p75")
-    total_p90 = _ts_val(ts, "announcement_to_close", "p90")
-    # Use empirical total or state machine, whichever is larger
-    sm_p50 = simulation.critical_path_duration_p50 or 0
-    sm_p75 = simulation.critical_path_duration_p75 or 0
-    sm_p90 = simulation.critical_path_duration_p90 or 0
-    close_p50 = max(total_p50, sm_p50) if total_p50 else sm_p50
-    close_p75 = max(total_p75, sm_p75) if total_p75 else sm_p75
-    close_p90 = max(total_p90, sm_p90) if total_p90 else sm_p90
+    # ── 2. Preliminary Proxy / S-4 Filed ─────────────────
+    proxy_p50 = _ts_val(ts, "announcement_to_proxy", "p50")
+    proxy_s4 = _ts_val(ts, "announcement_to_s4", "p50")
+    prelim_p50 = proxy_p50 or proxy_s4 or 30
+    prelim_p75 = (
+        _ts_val(ts, "announcement_to_proxy", "p75")
+        or _ts_val(ts, "announcement_to_s4", "p75")
+        or 45
+    )
+    prelim_p90 = (
+        _ts_val(ts, "announcement_to_proxy", "p90")
+        or _ts_val(ts, "announcement_to_s4", "p90")
+        or 60
+    )
+
+    milestones.append(MilestoneRow(
+        milestone="Preliminary Proxy/S-4 Filed",
+        jurisdiction="SEC",
+        base_case_date=(
+            announcement + timedelta(days=int(prelim_p50))
+        ),
+        extended_case_date=(
+            announcement + timedelta(days=int(prelim_p75))
+        ),
+        stress_case_date=(
+            announcement + timedelta(days=int(prelim_p90))
+        ),
+    ))
+
+    # ── 3. Definitive Proxy Mailed ───────────────────────
+    # ~30-60 days after preliminary (SEC review + revisions)
+    def_p50 = int(prelim_p50) + 45
+    def_p75 = int(prelim_p75) + 55
+    def_p90 = int(prelim_p90) + 70
+
+    milestones.append(MilestoneRow(
+        milestone="Definitive Proxy Mailed",
+        jurisdiction="SEC",
+        base_case_date=(
+            announcement + timedelta(days=def_p50)
+        ),
+        extended_case_date=(
+            announcement + timedelta(days=def_p75)
+        ),
+        stress_case_date=(
+            announcement + timedelta(days=def_p90)
+        ),
+    ))
+
+    # ── 4. Shareholder Vote ──────────────────────────────
+    vote_p50 = _ts_val(ts, "announcement_to_vote", "p50")
+    vote_p75 = _ts_val(ts, "announcement_to_vote", "p75")
+    vote_p90 = _ts_val(ts, "announcement_to_vote", "p90")
+
+    # If no empirical, derive from def proxy + 25 days
+    if not vote_p50:
+        vote_p50 = def_p50 + 25
+        vote_p75 = def_p75 + 30
+        vote_p90 = def_p90 + 35
+
+    milestones.append(MilestoneRow(
+        milestone="Shareholder Vote",
+        jurisdiction="SEC",
+        base_case_date=(
+            announcement + timedelta(days=int(vote_p50))
+        ),
+        extended_case_date=(
+            announcement + timedelta(days=int(vote_p75))
+        ),
+        stress_case_date=(
+            announcement + timedelta(days=int(vote_p90))
+        ),
+    ))
+
+    # ── 5. Expected Close ────────────────────────────────
+    # Close = max(last regulatory clearance, vote) + DMA gap
+    last_condition_p50 = max(latest_clear_p50, vote_p50)
+    last_condition_p75 = max(latest_clear_p75, vote_p75)
+    last_condition_p90 = max(latest_clear_p90, vote_p90)
+
+    close_p50 = int(last_condition_p50) + dma_close_gap
+    close_p75 = int(last_condition_p75) + dma_close_gap
+    close_p90 = int(last_condition_p90) + dma_close_gap
+
+    # Also check empirical total as floor
+    emp_total_p50 = _ts_val(ts, "announcement_to_close", "p50")
+    emp_total_p75 = _ts_val(ts, "announcement_to_close", "p75")
+    emp_total_p90 = _ts_val(ts, "announcement_to_close", "p90")
+    if emp_total_p50:
+        close_p50 = max(close_p50, int(emp_total_p50))
+    if emp_total_p75:
+        close_p75 = max(close_p75, int(emp_total_p75))
+    if emp_total_p90:
+        close_p90 = max(close_p90, int(emp_total_p90))
 
     milestones.append(MilestoneRow(
         milestone="Expected Close",
@@ -304,16 +436,17 @@ def _build_milestones(
             if merger_agreement else None
         ),
         base_case_date=(
-            announcement + timedelta(days=int(close_p50))
-            if close_p50 else None
+            announcement + timedelta(days=close_p50)
         ),
         extended_case_date=(
-            announcement + timedelta(days=int(close_p75))
-            if close_p75 else None
+            announcement + timedelta(days=close_p75)
         ),
         stress_case_date=(
-            announcement + timedelta(days=int(close_p90))
-            if close_p90 else None
+            announcement + timedelta(days=close_p90)
+        ),
+        notes=(
+            f"{dma_close_gap} BD after all conditions "
+            f"per DMA"
         ),
     ))
 

@@ -64,6 +64,7 @@ class PathOutcome(BaseModel):
 class JurisdictionSimulation(BaseModel):
     """Complete simulation output for one jurisdiction."""
     jurisdiction: JurisdictionName
+    jurisdiction_label: str = ""  # actual name (e.g. "STATE_PUC_PA")
     is_required: bool
     confidence_required: float
     source_of_requirement: str

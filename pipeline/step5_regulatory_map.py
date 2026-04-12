@@ -40,6 +40,13 @@ _CONDITION_TO_JURISDICTION = {
     "fdic": "FDIC",
     "occ": "OCC",
     "state insurance": "STATE_INSURANCE",
+    "other foreign investment": "FOREIGN_INVESTMENT",
+    "foreign investment": "FOREIGN_INVESTMENT",
+    "korea ftc": "KFTC",
+    "japan antitrust": "JFTC",
+    "japan ftc": "JFTC",
+    "brazil antitrust": "CADE",
+    "india cci": "CCI",
 }
 
 # US states with PUC regulatory authority over utilities
@@ -101,14 +108,19 @@ async def map_jurisdictions(
     # 1. Merger agreement — highest confidence
     if merger_agreement:
         for jur in merger_agreement.required_regulatory_approvals:
-            jur_upper = jur.upper()
-            if jur_upper not in requirements:
-                requirements[jur_upper] = JurisdictionRequirement(
-                    jurisdiction=jur_upper,
+            # Normalize known jurisdiction names
+            jur_norm = _CONDITION_TO_JURISDICTION.get(
+                jur.lower().strip(), jur.upper(),
+            )
+            if jur_norm not in requirements:
+                requirements[jur_norm] = JurisdictionRequirement(
+                    jurisdiction=jur_norm,
                     is_required=True,
                     confidence=1.0,
                     source="merger_agreement",
-                    notes="Explicitly required in merger agreement",
+                    notes=(
+                        f"Explicitly required: {jur}"
+                    ),
                 )
 
     # 2. Revenue threshold analysis

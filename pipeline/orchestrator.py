@@ -153,11 +153,25 @@ async def run_timing_estimation(
     # Stage 3c: Load AJ / company guidance anchor
     # ═══════════════════════════════════════════════════════
     guidance_anchor = None
+    dma_close_gap = 3
     if deal_params.mars_deal_pk:
         try:
             from pipeline.step2b_guidance_anchor import (
                 load_guidance_anchor,
+                parse_dma_close_gap_days,
             )
+            from db.connection import get_pool as _gp
+            _pool = await _gp()
+            async with _pool.acquire() as _conn:
+                _dma_row = await _conn.fetchrow(
+                    "SELECT closing_guidance_dma "
+                    "FROM deals WHERE deal_pk = $1",
+                    deal_params.mars_deal_pk,
+                )
+            if _dma_row and _dma_row["closing_guidance_dma"]:
+                dma_close_gap = parse_dma_close_gap_days(
+                    _dma_row["closing_guidance_dma"],
+                )
             guidance_anchor = await load_guidance_anchor(
                 deal_params.mars_deal_pk,
                 deal_params.announcement_date,
@@ -176,6 +190,7 @@ async def run_timing_estimation(
             merger_agreement, deal_params,
             timeline_stats=timeline_stats,
             guidance_anchor=guidance_anchor,
+            dma_close_gap=dma_close_gap,
         )
         report.overlap_type = overlap_assessment.overlap_type
         report.overlap_severity = overlap_assessment.overlap_severity
