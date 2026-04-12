@@ -1,9 +1,18 @@
 """
 Step 5: Cross-Border Regulatory Mapping
 
-Maps required jurisdictions based on merger agreement, 10-K revenue, and precedent.
+Maps required jurisdictions from five signal layers:
+  0. MARS regulatory flags (regulatory_reviews)
+  0b. MARS deal_conditions (PUCs, banking, SAMR, etc.)
+  1. Merger agreement required approvals
+  2. Revenue thresholds (10-K geographic segments)
+  2b. State-level revenue for regulated industries (PUC inference)
+  3. Comparable deal precedent (jurisdiction flags + condition patterns)
+  4. CFIUS sector assessment
 """
 import logging
+from db.connection import get_pool
+from models.deal import DealParameters
 from models.documents import ParsedTenK, ParsedMergerAgreement
 from models.comparables import ComparableGroup
 from models.regulatory import JurisdictionRequirement
@@ -14,6 +23,36 @@ from config.constants import (
 
 logger = logging.getLogger(__name__)
 
+# Map known condition names → jurisdiction codes
+_CONDITION_TO_JURISDICTION = {
+    "china antitrust": "SAMR",
+    "samr": "SAMR",
+    "uk antitrust": "CMA",
+    "cma": "CMA",
+    "ec antitrust": "EC",
+    "eu antitrust": "EC",
+    "european commission": "EC",
+    "cfius": "CFIUS",
+    "investment canada": "INVESTMENT_CANADA",
+    "australia firb": "AUSTRALIA_FIRB",
+    "accc": "ACCC",
+    "federal reserve": "FED_RESERVE",
+    "fdic": "FDIC",
+    "occ": "OCC",
+    "state insurance": "STATE_INSURANCE",
+}
+
+# US states with PUC regulatory authority over utilities
+_PUC_STATES = {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de",
+    "fl", "ga", "hi", "id", "il", "in", "ia", "ks",
+    "ky", "la", "me", "md", "ma", "mi", "mn", "ms",
+    "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny",
+    "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc",
+    "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv",
+    "wi", "wy",
+}
+
 
 async def map_jurisdictions(
     tenk_acquirer: ParsedTenK | None,
@@ -21,6 +60,7 @@ async def map_jurisdictions(
     merger_agreement: ParsedMergerAgreement | None,
     comparable_groups: list[ComparableGroup],
     mars_deal_pk: int | None = None,
+    deal_params: DealParameters | None = None,
 ) -> list[JurisdictionRequirement]:
     """Determine which jurisdictions are required for this deal."""
     requirements = {}
@@ -52,24 +92,37 @@ async def map_jurisdictions(
                 f"MARS regulatory flags load failed: {e}"
             )
 
+    # 0b. MARS deal_conditions — PUCs, banking, foreign
+    if mars_deal_pk:
+        await _check_deal_conditions(
+            mars_deal_pk, requirements,
+        )
+
     # 1. Merger agreement — highest confidence
     if merger_agreement:
         for jur in merger_agreement.required_regulatory_approvals:
             jur_upper = jur.upper()
-            requirements[jur_upper] = JurisdictionRequirement(
-                jurisdiction=jur_upper,
-                is_required=True,
-                confidence=1.0,
-                source="merger_agreement",
-                notes=f"Explicitly required in merger agreement",
-            )
+            if jur_upper not in requirements:
+                requirements[jur_upper] = JurisdictionRequirement(
+                    jurisdiction=jur_upper,
+                    is_required=True,
+                    confidence=1.0,
+                    source="merger_agreement",
+                    notes="Explicitly required in merger agreement",
+                )
 
     # 2. Revenue threshold analysis
     if tenk_acquirer and tenk_target:
-        _check_revenue_thresholds(tenk_acquirer, tenk_target, requirements)
+        _check_revenue_thresholds(
+            tenk_acquirer, tenk_target, requirements,
+            deal_params=deal_params,
+        )
 
-    # 3. Comparable deal precedent
-    _check_comparable_precedent(comparable_groups, requirements)
+    # 3. Comparable deal precedent (jurisdiction flags +
+    #    condition patterns)
+    await _check_comparable_precedent(
+        comparable_groups, requirements,
+    )
 
     # 4. CFIUS assessment
     _check_cfius(tenk_acquirer, tenk_target, requirements)
@@ -81,15 +134,121 @@ async def map_jurisdictions(
             is_required=True,
             confidence=0.9,
             source="default_us_public",
-            notes="HSR assumed required for US public company M&A",
+            notes=(
+                "HSR assumed required for US public "
+                "company M&A"
+            ),
         )
 
     return list(requirements.values())
 
 
+async def _check_deal_conditions(
+    deal_pk: int,
+    requirements: dict[str, JurisdictionRequirement],
+) -> None:
+    """Map deal_conditions to jurisdiction requirements.
+
+    Reads ALL condition families — not just antitrust.
+    State PUCs, banking regulators, and foreign investment
+    conditions are mapped to jurisdiction codes that route
+    through GenericStateMachine.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT DISTINCT condition_name, condition_family "
+            "FROM deal_conditions WHERE deal_pk = $1",
+            deal_pk,
+        )
+
+    if not rows:
+        return
+
+    for row in rows:
+        name = (row["condition_name"] or "").strip()
+        family = (row["condition_family"] or "").lower()
+        name_lower = name.lower()
+
+        # Skip antitrust conditions already handled by
+        # regulatory_reviews + merger agreement path
+        if family == "antitrust" and name_lower in (
+            "hsr", "hart-scott-rodino",
+        ):
+            continue
+
+        # Known condition → jurisdiction mapping
+        jur = _CONDITION_TO_JURISDICTION.get(name_lower)
+
+        # PUC pattern: "{STATE} PUC" or "{STATE} PUC {detail}"
+        if jur is None and "puc" in name_lower:
+            parts = name.split()
+            if parts:
+                state = parts[0].upper()
+                if state.lower() in _PUC_STATES:
+                    jur = f"STATE_PUC_{state}"
+                elif "state" in name_lower or "various" in name_lower:
+                    jur = "STATE_PUC_MULTI"
+                else:
+                    jur = f"STATE_PUC_{state}"
+
+        # Antitrust conditions not in the standard map
+        # (e.g. "China Antitrust", "Korea FTC")
+        if jur is None and family == "antitrust":
+            if "china" in name_lower:
+                jur = "SAMR"
+            elif "korea" in name_lower:
+                jur = "KFTC"
+            elif "japan" in name_lower:
+                jur = "JFTC"
+            elif "brazil" in name_lower:
+                jur = "CADE"
+            elif "india" in name_lower:
+                jur = "CCI"
+            else:
+                # Generic antitrust — use the condition name
+                jur = name.upper().replace(" ", "_")
+
+        # Foreign investment conditions
+        if jur is None and family == "foreign_investment":
+            if "other" in name_lower:
+                jur = "FOREIGN_INVESTMENT_OTHER"
+            else:
+                jur = name.upper().replace(" ", "_")
+
+        # SEC conditions (informational — not modeled as
+        # a separate jurisdiction, affects proxy timeline)
+        if family == "sec_effectiveness":
+            continue
+
+        # Shareholder approval (handled by proxy timeline)
+        if "sh approval" in name_lower:
+            continue
+
+        if jur and jur not in requirements:
+            requirements[jur] = JurisdictionRequirement(
+                jurisdiction=jur,
+                is_required=True,
+                confidence=0.95,
+                source="deal_conditions",
+                notes=f"Condition: {name} ({family})",
+            )
+
+    condition_count = sum(
+        1 for j in requirements.values()
+        if j.source == "deal_conditions"
+    )
+    if condition_count:
+        logger.info(
+            f"Deal conditions: {condition_count} "
+            f"jurisdictions from deal_conditions"
+        )
+
+
 def _check_revenue_thresholds(
     tenk_acquirer: ParsedTenK, tenk_target: ParsedTenK,
     requirements: dict[str, JurisdictionRequirement],
+    deal_params: DealParameters | None = None,
 ) -> None:
     """Check if geographic revenue triggers filing requirements."""
     acq_segments = {s.region.lower(): s for s in tenk_acquirer.geographic_segments}
@@ -133,27 +292,93 @@ def _check_revenue_thresholds(
     tgt_cn_rev = sum(s.revenue_usd or 0 for k, s in tgt_segments.items() if any(r in k for r in china_regions))
 
     samr_threshold = JURISDICTION_REVENUE_THRESHOLDS["SAMR"]["china_turnover_each_party_cny"]
-    samr_threshold_usd = samr_threshold / 7.2  # Approximate CNY to USD
-    if acq_cn_rev > samr_threshold_usd and tgt_cn_rev > samr_threshold_usd and "SAMR" not in requirements:
+    samr_threshold_usd = samr_threshold / 7.2
+    if (
+        acq_cn_rev > samr_threshold_usd
+        and tgt_cn_rev > samr_threshold_usd
+        and "SAMR" not in requirements
+    ):
         requirements["SAMR"] = JurisdictionRequirement(
             jurisdiction="SAMR",
             is_required=True,
             confidence=0.8,
             source="revenue_threshold",
-            revenue_data={"acquirer_china_revenue": acq_cn_rev, "target_china_revenue": tgt_cn_rev},
+            revenue_data={
+                "acquirer_china_revenue": acq_cn_rev,
+                "target_china_revenue": tgt_cn_rev,
+            },
             notes="China revenue exceeds SAMR filing thresholds",
         )
 
+    # State PUC inference for regulated industries
+    # (utilities, insurance, banking)
+    regulated_sectors = {
+        "utilities", "financials",
+    }
+    sector = ""
+    if deal_params:
+        sector = (deal_params.gics_sector or "").lower()
 
-def _check_comparable_precedent(
+    if sector in regulated_sectors:
+        _check_state_puc_revenue(
+            tenk_target, requirements, sector,
+        )
+
+
+def _check_state_puc_revenue(
+    tenk_target: ParsedTenK,
+    requirements: dict[str, JurisdictionRequirement],
+    sector: str,
+) -> None:
+    """For regulated industries, check target's state-level
+    revenue to infer PUC approval requirements.
+
+    Utilities with >$100M revenue in a state likely need
+    that state's PUC approval.
+    """
+    threshold = 100_000_000  # $100M
+    if sector == "financials":
+        threshold = 500_000_000  # $500M for banking
+
+    tgt_segs = {
+        s.region.lower(): s
+        for s in tenk_target.geographic_segments
+    }
+
+    for region_key, seg in tgt_segs.items():
+        rev = seg.revenue_usd or 0
+        if rev < threshold:
+            continue
+        # Match state abbreviations or names
+        for state in _PUC_STATES:
+            if state in region_key or state.upper() in region_key:
+                jur = f"STATE_PUC_{state.upper()}"
+                if jur not in requirements:
+                    requirements[jur] = JurisdictionRequirement(
+                        jurisdiction=jur,
+                        is_required=True,
+                        confidence=0.7,
+                        source="revenue_threshold_state",
+                        revenue_data={
+                            "target_state_revenue": rev,
+                        },
+                        notes=(
+                            f"Target has ${rev/1e6:.0f}M "
+                            f"revenue in {state.upper()}"
+                        ),
+                    )
+
+
+async def _check_comparable_precedent(
     comparable_groups: list[ComparableGroup],
     requirements: dict[str, JurisdictionRequirement],
 ) -> None:
-    """Check if comparable deals suggest jurisdictions not yet identified.
+    """Check if comparable deals suggest jurisdictions not yet
+    identified — both from their jurisdiction flags AND from
+    their deal_conditions patterns.
 
-    For SAMR and CFIUS, also uses calibrated activation rates from
-    config/calibration.json when comparable precedent is inconclusive
-    (confidence < 0.8).
+    If >60% of comps had a specific condition (e.g. "CA PUC"),
+    infer this deal likely needs it too.
     """
     from config.calibration import get_rate
 
@@ -162,10 +387,10 @@ def _check_comparable_precedent(
         all_deals.extend(group.deals[:10])
 
     if not all_deals:
-        # No comparables — fall back to calibrated rates only
         _apply_calibrated_activation(requirements)
         return
 
+    # Jurisdiction flags from comps
     jur_counts: dict[str, int] = {}
     for deal in all_deals:
         for jur in deal.jurisdictions_required:
@@ -186,9 +411,75 @@ def _check_comparable_precedent(
                 ),
             )
 
-    # For SAMR/CFIUS not yet in requirements, use calibrated
-    # activation rates as a weak signal
+    # Condition patterns from comps — infer PUC/banking/
+    # foreign investment conditions that this deal may need
+    await _infer_conditions_from_comps(
+        all_deals, requirements,
+    )
+
     _apply_calibrated_activation(requirements)
+
+
+async def _infer_conditions_from_comps(
+    comp_deals: list,
+    requirements: dict[str, JurisdictionRequirement],
+) -> None:
+    """Query deal_conditions for comparable deal PKs and
+    infer jurisdiction requirements from condition patterns.
+
+    If >60% of comps had a specific condition type (e.g.
+    PUC approvals), add it for this deal.
+    """
+    comp_pks = [d.deal_pk for d in comp_deals if d.deal_pk]
+    if not comp_pks:
+        return
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT condition_name, condition_family,
+                   COUNT(DISTINCT deal_pk) AS n
+            FROM deal_conditions
+            WHERE deal_pk = ANY($1::bigint[])
+              AND condition_family IN ('other',
+                  'foreign_investment')
+            GROUP BY condition_name, condition_family
+            ORDER BY n DESC
+            """,
+            comp_pks,
+        )
+
+    total = len(comp_pks)
+    threshold = 0.6  # 60% of comps must have the condition
+
+    for row in rows:
+        rate = row["n"] / total
+        if rate < threshold:
+            continue
+
+        name = (row["condition_name"] or "").strip()
+        name_lower = name.lower()
+
+        # Map to jurisdiction code
+        jur = _CONDITION_TO_JURISDICTION.get(name_lower)
+        if jur is None and "puc" in name_lower:
+            parts = name.split()
+            if parts:
+                state = parts[0].upper()
+                jur = f"STATE_PUC_{state}"
+
+        if jur and jur not in requirements:
+            requirements[jur] = JurisdictionRequirement(
+                jurisdiction=jur,
+                is_required=True,
+                confidence=0.55,
+                source="comparable_conditions",
+                notes=(
+                    f"{row['n']}/{total} comps had "
+                    f"'{name}' ({rate:.0%})"
+                ),
+            )
 
 
 def _apply_calibrated_activation(

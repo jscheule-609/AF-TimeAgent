@@ -35,12 +35,15 @@ async def assemble_timeline(
     merger_agreement: ParsedMergerAgreement | None,
     deal_params: DealParameters,
     timeline_stats: dict | None = None,
+    guidance_anchor: date | None = None,
 ) -> DealTimingReport:
     """Assemble the final timeline report.
 
     When *timeline_stats* is provided (from step3b), close-date
     predictions use comparable-driven empirical durations.
-    Otherwise falls back to the state-machine-only model.
+    *guidance_anchor* (from step2b) is used as a floor — the
+    model should not predict earlier than what the company/AJ
+    expects.
     """
     announcement = deal_params.announcement_date
     ts = timeline_stats or {}
@@ -102,13 +105,31 @@ async def assemble_timeline(
             f"Timeline calibration: reg_p50={reg_p50:.0f} "
             f"proxy_p50={proxy_p50:.0f} "
             f"total_p50={total_p50:.0f} "
-            f"sm_p50={sm_p50} → final_p50={p50_days:.0f}"
+            f"sm_p50={sm_p50}"
         )
     else:
         # Fallback: state-machine only (old behavior)
         p50_days = simulation.critical_path_duration_p50 or 0
         p75_days = simulation.critical_path_duration_p75 or 0
         p90_days = simulation.critical_path_duration_p90 or 0
+
+    # ── Guidance anchor ──────────────────────────────────
+    # The company/AJ guidance is the strongest signal for
+    # expected close timing.  Use it as a floor — our model
+    # should not predict earlier than what the parties
+    # themselves expect.
+    if guidance_anchor and guidance_anchor > announcement:
+        guidance_days = (guidance_anchor - announcement).days
+        old_p50 = p50_days
+        p50_days = max(p50_days, guidance_days * 0.85)
+        p75_days = max(p75_days, guidance_days)
+        p90_days = max(p90_days, guidance_days * 1.15)
+        if p50_days != old_p50:
+            logger.info(
+                f"Guidance anchor shifted P50: "
+                f"{old_p50:.0f} -> {p50_days:.0f} days "
+                f"(anchor={guidance_anchor})"
+            )
 
     p50_date = (
         announcement + timedelta(days=int(p50_days))

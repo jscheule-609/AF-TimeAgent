@@ -109,6 +109,7 @@ async def run_timing_estimation(
             tenk_acquirer, tenk_target, merger_agreement,
             comparable_groups,
             mars_deal_pk=deal_params.mars_deal_pk,
+            deal_params=deal_params,
         )
         logger.info(f"Jurisdictions mapped: {[r.jurisdiction for r in regulatory_map if r.is_required]}")
 
@@ -149,6 +150,24 @@ async def run_timing_estimation(
         )
 
     # ═══════════════════════════════════════════════════════
+    # Stage 3c: Load AJ / company guidance anchor
+    # ═══════════════════════════════════════════════════════
+    guidance_anchor = None
+    if deal_params.mars_deal_pk:
+        try:
+            from pipeline.step2b_guidance_anchor import (
+                load_guidance_anchor,
+            )
+            guidance_anchor = await load_guidance_anchor(
+                deal_params.mars_deal_pk,
+                deal_params.announcement_date,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Guidance anchor load failed: {e}"
+            )
+
+    # ═══════════════════════════════════════════════════════
     # Stage 4: Timeline assembly + Prediction logging
     # ═══════════════════════════════════════════════════════
     try:
@@ -156,6 +175,7 @@ async def run_timing_estimation(
             simulation, press_release_data,
             merger_agreement, deal_params,
             timeline_stats=timeline_stats,
+            guidance_anchor=guidance_anchor,
         )
         report.overlap_type = overlap_assessment.overlap_type
         report.overlap_severity = overlap_assessment.overlap_severity
