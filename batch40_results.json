@@ -1,0 +1,16 @@
+[
+  {
+    "tgt": "Centessa Pharmaceutica",
+    "pk": 93067,
+    "p50": "2026-07-17",
+    "p75": "2026-08-07",
+    "crit": "HSR",
+    "aj": "Q3 2026",
+    "flag": "aligned",
+    "gap": 29,
+    "unexpl": 0,
+    "n_adj": 0,
+    "comps": 30,
+    "risks": 0
+  }
+]
