@@ -69,22 +69,29 @@ async def load_deal_params_from_mars(
                 d.deal_value_usd, d.type_of_consideration,
                 d.deal_structure_type,
                 d.date_announced, d.date_expected_close_parsed,
-                d.acquirer_country, d.target_country,
                 d.industry, d.gics_sector, d.deal_attitude,
                 pa.ticker  AS acquirer_ticker,
                 pa.company_name AS acquirer_name,
                 pt.ticker  AS target_ticker,
                 pt.company_name AS target_name,
-                pe_acq.party_type AS acquirer_party_type
+                pe_acq.party_type AS acquirer_party_type,
+                pe_acq.domicile_country AS acquirer_country,
+                pe_tgt.domicile_country AS target_country
             FROM deals d
             LEFT JOIN parties pa
                 ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
             LEFT JOIN parties pt
                 ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             LEFT JOIN deal_parties dp_acq
-                ON d.deal_pk = dp_acq.deal_pk AND dp_acq.role_type = 'acquirer'
+                ON d.deal_pk = dp_acq.deal_pk
+                AND dp_acq.role_type = 'acquirer'
             LEFT JOIN party_entities pe_acq
                 ON dp_acq.party_id = pe_acq.party_id
+            LEFT JOIN deal_parties dp_tgt
+                ON d.deal_pk = dp_tgt.deal_pk
+                AND dp_tgt.role_type = 'target'
+            LEFT JOIN party_entities pe_tgt
+                ON dp_tgt.party_id = pe_tgt.party_id
             WHERE d.deal_pk = $1
             """,
             deal_pk,
@@ -185,8 +192,7 @@ async def load_merger_terms_from_mars(
 
         # v2: deal_regulatory_efforts → deal_protections
         prot = await conn.fetchrow(
-            """SELECT efforts_standard, divestiture_cap,
-                      hell_or_high_water
+            """SELECT efforts_standard, divestiture_cap
                FROM deal_protections WHERE deal_pk = $1""",
             deal_pk,
         )
@@ -243,7 +249,9 @@ async def load_merger_terms_from_mars(
             divestiture_commitment = prot["divestiture_cap"]
         else:
             divestiture_commitment = "no"
-        litigation_commitment = bool(prot["hell_or_high_water"])
+        litigation_commitment = (
+            "hell" in (prot["efforts_standard"] or "").lower()
+        )
 
     if cond_rows:
         raw_approvals = [r["condition_name"] for r in cond_rows]
@@ -298,7 +306,10 @@ async def load_press_release_data_from_mars(
 
         # Get jurisdictions from regulatory_reviews
         jur_rows = await conn.fetch(
-            "SELECT jurisdiction_code FROM regulatory_reviews WHERE deal_pk = $1",
+            "SELECT jurisdiction_code "
+            "FROM regulatory_reviews "
+            "WHERE deal_pk = $1 "
+            "AND review_status != 'not_filed'",
             deal_pk,
         )
 
@@ -341,7 +352,8 @@ async def load_regulatory_flags_from_mars(
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT jurisdiction_code FROM regulatory_reviews WHERE deal_pk = $1",
+            "SELECT jurisdiction_code FROM regulatory_reviews "
+            "WHERE deal_pk = $1 AND review_status != 'not_filed'",
             deal_pk,
         )
 

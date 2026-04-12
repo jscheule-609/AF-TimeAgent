@@ -74,26 +74,35 @@ _REGULATORY_COLUMNS = """
 
     dp.efforts_standard,
     (dp.divestiture_cap IS NOT NULL)             AS divestiture_commitment,
-    dp.hell_or_high_water                        AS litigation_commitment
+    (dp.efforts_standard ILIKE '%hell%high%water%') AS litigation_commitment
 """
 
 _BASE_DEAL_COLUMNS = """
     d.deal_pk, d.deal_id, d.deal_status, d.date_announced,
     d.deal_value_usd, d.industry, d.type_of_consideration,
     d.gics_sector, d.deal_attitude,
-    d.acquirer_country, d.target_country,
+    pe_acq.domicile_country AS acquirer_country,
+    pe_tgt.domicile_country AS target_country,
     d.timeline_days, d.actual_completion_date,
     d.date_expected_close_parsed, d.deal_outcome,
-    pa.ticker as acquirer_ticker, pa.company_name as acquirer_name,
-    pt.ticker as target_ticker, pt.company_name as target_name,
+    pa.ticker as acquirer_ticker,
+    pa.company_name as acquirer_name,
+    pt.ticker as target_ticker,
+    pt.company_name as target_name,
     pe_acq.party_type as acquirer_party_type
 """
 
 _PARTY_ENTITY_JOINS = """
 LEFT JOIN deal_parties dp_acq
-    ON d.deal_pk = dp_acq.deal_pk AND dp_acq.role_type = 'acquirer'
+    ON d.deal_pk = dp_acq.deal_pk
+    AND dp_acq.role_type = 'acquirer'
 LEFT JOIN party_entities pe_acq
     ON dp_acq.party_id = pe_acq.party_id
+LEFT JOIN deal_parties dp_tgt
+    ON d.deal_pk = dp_tgt.deal_pk
+    AND dp_tgt.role_type = 'target'
+LEFT JOIN party_entities pe_tgt
+    ON dp_tgt.party_id = pe_tgt.party_id
 """
 
 

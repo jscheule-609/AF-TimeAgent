@@ -73,6 +73,7 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
         JOIN regulatory_reviews rr
             ON d.deal_pk = rr.deal_pk
             AND rr.jurisdiction_code = 'US'
+            AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
     """
     overall_rate = await _fetch_scalar(pool, overall_rate_sql)
@@ -88,6 +89,7 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
         JOIN regulatory_reviews rr
             ON d.deal_pk = rr.deal_pk
             AND rr.jurisdiction_code = 'US'
+            AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
         GROUP BY d.gics_sector
         ORDER BY d.gics_sector
@@ -113,6 +115,7 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
             JOIN regulatory_reviews rr
                 ON d.deal_pk = rr.deal_pk
                 AND rr.jurisdiction_code = 'US'
+                AND rr.review_status != 'not_filed'
             WHERE d.deal_outcome = 'Closed'
               AND rr.filing_date IS NOT NULL
               AND rr.clearance_date IS NOT NULL
@@ -151,6 +154,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
         JOIN regulatory_reviews rr
             ON d.deal_pk = rr.deal_pk
             AND rr.jurisdiction_code = 'EU'
+            AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
     """
     phase2_rate = await _fetch_scalar(pool, rate_sql)
@@ -168,6 +172,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
             ) AS p90
         FROM regulatory_reviews rr
         WHERE rr.jurisdiction_code = 'EU'
+          AND rr.review_status != 'not_filed'
           AND rr.filing_date IS NOT NULL
           AND rr.clearance_date IS NOT NULL
           AND rr.phase_2_start_date IS NULL
@@ -188,6 +193,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
             ) AS p90
         FROM regulatory_reviews rr
         WHERE rr.jurisdiction_code = 'EU'
+          AND rr.review_status != 'not_filed'
           AND rr.phase_2_start_date IS NOT NULL
           AND rr.clearance_date IS NOT NULL
     """
@@ -218,7 +224,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
 
 
 async def compute_cma_stats(pool) -> Dict[str, Any]:
-    """Compute CMA Phase 2 referral rates."""
+    """Compute CMA Phase 2 referral rates and durations."""
     rate_sql = """
         SELECT
             COUNT(*) FILTER (
@@ -229,9 +235,30 @@ async def compute_cma_stats(pool) -> Dict[str, Any]:
         JOIN regulatory_reviews rr
             ON d.deal_pk = rr.deal_pk
             AND rr.jurisdiction_code = 'GB'
+            AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
     """
     phase2_rate = await _fetch_scalar(pool, rate_sql)
+
+    duration_sql = """
+        SELECT
+            percentile_cont(0.5)  WITHIN GROUP (
+                ORDER BY (rr.clearance_date - rr.filing_date)
+            ) AS p50,
+            percentile_cont(0.75) WITHIN GROUP (
+                ORDER BY (rr.clearance_date - rr.filing_date)
+            ) AS p75,
+            percentile_cont(0.90) WITHIN GROUP (
+                ORDER BY (rr.clearance_date - rr.filing_date)
+            ) AS p90
+        FROM regulatory_reviews rr
+        WHERE rr.jurisdiction_code = 'GB'
+          AND rr.review_status != 'not_filed'
+          AND rr.filing_date IS NOT NULL
+          AND rr.clearance_date IS NOT NULL
+    """
+    dur_rows = await _fetch_rows(pool, duration_sql)
+    dur = dur_rows[0] if dur_rows else {}
 
     model_base_rate = 0.05
 
@@ -241,11 +268,17 @@ async def compute_cma_stats(pool) -> Dict[str, Any]:
             observed=phase2_rate,
             model_base=model_base_rate,
         ),
+        "durations": DurationSummary(
+            name="cma_clearance_days_from_filing",
+            p50=_to_float(dur.get("p50")),
+            p75=_to_float(dur.get("p75")),
+            p90=_to_float(dur.get("p90")),
+        ),
     }
 
 
 async def compute_samr_stats(pool) -> Dict[str, Any]:
-    """Compute SAMR activation rate (how often SAMR review exists)."""
+    """Compute SAMR activation rate (how often SAMR review was filed)."""
     rate_sql = """
         SELECT
             COUNT(DISTINCT rr.deal_pk)::float
@@ -256,6 +289,7 @@ async def compute_samr_stats(pool) -> Dict[str, Any]:
         FROM regulatory_reviews rr
         JOIN deals d ON rr.deal_pk = d.deal_pk
         WHERE rr.jurisdiction_code = 'CN'
+          AND rr.review_status != 'not_filed'
           AND d.deal_outcome = 'Closed'
     """
     applicable_rate = await _fetch_scalar(pool, rate_sql)
@@ -281,6 +315,7 @@ async def compute_cfius_stats(pool) -> Dict[str, Any]:
         FROM regulatory_reviews rr
         JOIN deals d ON rr.deal_pk = d.deal_pk
         WHERE rr.jurisdiction_code = 'CFIUS'
+          AND rr.review_status != 'not_filed'
           AND d.deal_outcome = 'Closed'
     """
     review_rate = await _fetch_scalar(pool, rate_sql)
@@ -329,6 +364,9 @@ async def generate_report() -> Dict[str, Any]:
             },
             "cma": {
                 "rates": _serialize(cma["rates"]),
+                "durations": _serialize(
+                    cma["durations"]
+                ),
             },
             "samr": {
                 "rates": _serialize(samr["rates"]),

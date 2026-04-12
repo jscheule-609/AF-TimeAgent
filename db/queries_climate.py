@@ -36,7 +36,7 @@ async def get_enforcement_stats(months: int = 24) -> dict:
                     WHERE rr_gb.review_id IS NOT NULL
                 ) AS cma_total,
                 COUNT(*) FILTER (
-                    WHERE dl.antitrust_litigation = TRUE
+                    WHERE dl.litigation_type = 'antitrust'
                 ) AS litigation_count
             FROM deals d
             LEFT JOIN regulatory_reviews rr_us
@@ -68,7 +68,7 @@ async def get_sector_enforcement_intensity() -> list[dict]:
             SELECT
                 d.industry, d.gics_sector,
                 COUNT(*) FILTER (
-                    WHERE dl.antitrust_litigation = TRUE
+                    WHERE dl.litigation_type = 'antitrust'
                 ) AS litigation_count,
                 COUNT(*) FILTER (
                     WHERE d.deal_outcome = 'Terminated'

@@ -1,0 +1,107 @@
+{
+  "hsr": {
+    "rates": {
+      "name": "hsr_second_request_rate",
+      "observed": 0.15368852459016394,
+      "model_base": 0.095
+    },
+    "rates_by_sector": [
+      {
+        "sector": "Communication Services",
+        "second_request_rate": 0.2679738562091503
+      },
+      {
+        "sector": "Consumer Discretionary",
+        "second_request_rate": 0.15789473684210525
+      },
+      {
+        "sector": "Consumer Staples",
+        "second_request_rate": 0.16417910447761194
+      },
+      {
+        "sector": "Energy",
+        "second_request_rate": 0.15517241379310345
+      },
+      {
+        "sector": "Financials",
+        "second_request_rate": 0.07407407407407407
+      },
+      {
+        "sector": "Health Care",
+        "second_request_rate": 0.15178571428571427
+      },
+      {
+        "sector": "Industrials",
+        "second_request_rate": 0.14849187935034802
+      },
+      {
+        "sector": "Information Technology",
+        "second_request_rate": 0.1206896551724138
+      },
+      {
+        "sector": "Materials",
+        "second_request_rate": 0.20253164556962025
+      },
+      {
+        "sector": "Real Estate",
+        "second_request_rate": 0.0
+      },
+      {
+        "sector": "Utilities",
+        "second_request_rate": 0.18518518518518517
+      }
+    ],
+    "durations": {
+      "name": "hsr_clearance_days_from_filing",
+      "p50": null,
+      "p75": null,
+      "p90": null
+    }
+  },
+  "ec": {
+    "rates": {
+      "name": "ec_phase_2_rate",
+      "observed": 0.0,
+      "model_base": 0.03
+    },
+    "phase1_durations": {
+      "name": "ec_phase1_days_from_filing",
+      "p50": null,
+      "p75": null,
+      "p90": null
+    },
+    "phase2_durations": {
+      "name": "ec_phase2_days_from_phase2_open",
+      "p50": null,
+      "p75": null,
+      "p90": null
+    }
+  },
+  "cma": {
+    "rates": {
+      "name": "cma_phase_2_rate",
+      "observed": 0.0,
+      "model_base": 0.05
+    },
+    "durations": {
+      "name": "cma_clearance_days_from_filing",
+      "p50": null,
+      "p75": null,
+      "p90": null
+    }
+  },
+  "samr": {
+    "rates": {
+      "name": "samr_applicable_rate",
+      "observed": 0.000286000286000286,
+      "model_base": null
+    }
+  },
+  "cfius": {
+    "rates": {
+      "name": "cfius_review_rate",
+      "observed": 0.01773201773201773,
+      "model_base": null
+    }
+  }
+}

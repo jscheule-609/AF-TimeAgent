@@ -77,23 +77,51 @@ class CMAStateMachine(BaseRegulatoryStateMachine):
     def compute_duration_distributions(
         self, comparable_stats: dict, climate: RegulatoryClimate,
     ) -> dict[str, dict]:
+        from config.calibration import get_duration
+
+        # Calibrated clearance durations (filing → clearance)
+        cal_p50 = get_duration("cma", "durations", "p50")
+        cal_p75 = get_duration("cma", "durations", "p75")
+        cal_p90 = get_duration("cma", "durations", "p90")
+
         # CMA Phase 1 uses working days, Phase 2 uses weeks
         p1_cal = int(CMA_PHASE_1_STATUTORY_DAYS * 7 / 5) + 2
         p2_cal = CMA_PHASE_2_STATUTORY_WEEKS * 7
-        p2_ext = (CMA_PHASE_2_STATUTORY_WEEKS + CMA_PHASE_2_EXTENSION_WEEKS) * 7
+        p2_ext = (
+            CMA_PHASE_2_STATUTORY_WEEKS
+            + CMA_PHASE_2_EXTENSION_WEEKS
+        ) * 7
+
+        # Use calibrated if available for Phase 1
+        p1_p50 = int(cal_p50) if cal_p50 else p1_cal
+        p1_p75 = int(cal_p75) if cal_p75 else p1_cal + 5
+        p1_p90 = int(cal_p90) if cal_p90 else p1_cal + 10
+
+        pre_lo = CMA_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[0]
+        pre_hi = CMA_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[1]
 
         return {
             "not_filed": {"p50": 0, "p75": 0, "p90": 0},
             "pre_notification": {
-                "p50": CMA_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[0],
-                "p75": 40,
-                "p90": CMA_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[1],
+                "p50": pre_lo, "p75": 40, "p90": pre_hi,
             },
-            "phase_1": {"p50": p1_cal, "p75": p1_cal + 5, "p90": p1_cal + 10},
-            "phase_1_cleared": {"p50": 0, "p75": 0, "p90": 0},
-            "phase_2": {"p50": p2_cal, "p75": int(p2_cal * 1.15), "p90": p2_ext},
-            "phase_2_cleared": {"p50": 0, "p75": 0, "p90": 0},
-            "cleared_with_remedies": {"p50": 10, "p75": 15, "p90": 20},
+            "phase_1": {
+                "p50": p1_p50, "p75": p1_p75, "p90": p1_p90,
+            },
+            "phase_1_cleared": {
+                "p50": 0, "p75": 0, "p90": 0,
+            },
+            "phase_2": {
+                "p50": p2_cal,
+                "p75": int(p2_cal * 1.15),
+                "p90": p2_ext,
+            },
+            "phase_2_cleared": {
+                "p50": 0, "p75": 0, "p90": 0,
+            },
+            "cleared_with_remedies": {
+                "p50": 10, "p75": 15, "p90": 20,
+            },
             "prohibited": {"p50": 0, "p75": 0, "p90": 0},
             "abandoned": {"p50": 0, "p75": 0, "p90": 0},
         }

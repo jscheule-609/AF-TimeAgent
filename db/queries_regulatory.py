@@ -68,8 +68,7 @@ async def get_deal_regulatory_efforts(deal_pk: int) -> Optional[dict]:
     async with pool.acquire() as conn:
         # Efforts standard and divestiture from deal_protections
         prot = await conn.fetchrow(
-            """SELECT efforts_standard, divestiture_cap,
-                      hell_or_high_water
+            """SELECT efforts_standard, divestiture_cap
                FROM deal_protections WHERE deal_pk = $1""",
             deal_pk,
         )
@@ -88,7 +87,10 @@ async def get_deal_regulatory_efforts(deal_pk: int) -> Optional[dict]:
 
     efforts_standard = (prot["efforts_standard"] if prot else None) or "unknown"
     divestiture_cap = (prot["divestiture_cap"] if prot else None)
-    hell_or_high_water = bool(prot["hell_or_high_water"]) if prot else False
+    hell_or_high_water = (
+        "hell" in (prot["efforts_standard"] or "").lower()
+        if prot else False
+    )
 
     required_approvals = [r["condition_name"] for r in cond_rows] if cond_rows else []
 
