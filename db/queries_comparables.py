@@ -12,15 +12,25 @@ from db.connection import get_pool
 # ── v2 JOINs ────────────────────────────────────────────────
 _REGULATORY_JOINS = """
 LEFT JOIN regulatory_reviews rr_us
-    ON d.deal_pk = rr_us.deal_pk AND rr_us.jurisdiction_code = 'US'
+    ON d.deal_pk = rr_us.deal_pk
+    AND rr_us.jurisdiction_code = 'US'
+    AND rr_us.review_status != 'not_filed'
 LEFT JOIN regulatory_reviews rr_eu
-    ON d.deal_pk = rr_eu.deal_pk AND rr_eu.jurisdiction_code = 'EU'
+    ON d.deal_pk = rr_eu.deal_pk
+    AND rr_eu.jurisdiction_code = 'EU'
+    AND rr_eu.review_status != 'not_filed'
 LEFT JOIN regulatory_reviews rr_cn
-    ON d.deal_pk = rr_cn.deal_pk AND rr_cn.jurisdiction_code = 'CN'
+    ON d.deal_pk = rr_cn.deal_pk
+    AND rr_cn.jurisdiction_code = 'CN'
+    AND rr_cn.review_status != 'not_filed'
 LEFT JOIN regulatory_reviews rr_gb
-    ON d.deal_pk = rr_gb.deal_pk AND rr_gb.jurisdiction_code = 'GB'
+    ON d.deal_pk = rr_gb.deal_pk
+    AND rr_gb.jurisdiction_code = 'GB'
+    AND rr_gb.review_status != 'not_filed'
 LEFT JOIN regulatory_reviews rr_cfius
-    ON d.deal_pk = rr_cfius.deal_pk AND rr_cfius.jurisdiction_code = 'CFIUS'
+    ON d.deal_pk = rr_cfius.deal_pk
+    AND rr_cfius.jurisdiction_code = 'CFIUS'
+    AND rr_cfius.review_status != 'not_filed'
 LEFT JOIN deal_competitive_analysis dca ON d.deal_pk = dca.deal_pk
 LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
 LEFT JOIN deal_protections dp ON d.deal_pk = dp.deal_pk
@@ -143,6 +153,39 @@ async def get_acquirer_prior_deals(acquirer_name: str, limit: int = 15) -> list[
             LIMIT $2
             """,
             acquirer_name, limit,
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_target_prior_deals(
+    target_name: str, limit: int = 15,
+) -> list[dict]:
+    """Get prior deals involving this target company.
+
+    Matches on target company name across closed/terminated
+    deals. Returns the same column shape as acquirer history
+    for consistent scoring.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT {_BASE_DEAL_COLUMNS}, {_REGULATORY_COLUMNS}
+            FROM deals d
+            JOIN parties pa
+                ON d.deal_pk = pa.deal_pk
+                AND pa.role = 'acquirer'
+            JOIN parties pt
+                ON d.deal_pk = pt.deal_pk
+                AND pt.role = 'target'
+            {_REGULATORY_JOINS}
+            {_PARTY_ENTITY_JOINS}
+            WHERE pt.company_name ILIKE '%' || $1 || '%'
+              AND d.deal_outcome IN ('Closed', 'Terminated')
+            ORDER BY d.date_announced DESC
+            LIMIT $2
+            """,
+            target_name, limit,
         )
         return [dict(r) for r in rows]
 

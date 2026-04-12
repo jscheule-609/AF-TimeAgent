@@ -42,12 +42,15 @@ async def get_enforcement_stats(months: int = 24) -> dict:
             LEFT JOIN regulatory_reviews rr_us
                 ON d.deal_pk = rr_us.deal_pk
                 AND rr_us.jurisdiction_code = 'US'
+                AND rr_us.review_status != 'not_filed'
             LEFT JOIN regulatory_reviews rr_eu
                 ON d.deal_pk = rr_eu.deal_pk
                 AND rr_eu.jurisdiction_code = 'EU'
+                AND rr_eu.review_status != 'not_filed'
             LEFT JOIN regulatory_reviews rr_gb
                 ON d.deal_pk = rr_gb.deal_pk
                 AND rr_gb.jurisdiction_code = 'GB'
+                AND rr_gb.review_status != 'not_filed'
             LEFT JOIN deal_litigation dl
                 ON d.deal_pk = dl.deal_pk
             WHERE d.date_announced >= NOW()

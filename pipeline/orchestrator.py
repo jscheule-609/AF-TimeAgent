@@ -122,11 +122,40 @@ async def run_timing_estimation(
         raise PipelineError("stage3_simulation", str(e))
 
     # ═══════════════════════════════════════════════════════
+    # Stage 3b: Per-deal timeline calibration from comps
+    # ═══════════════════════════════════════════════════════
+    timeline_stats = None
+    try:
+        from db.queries_comparables import get_target_prior_deals
+        from pipeline.step3b_timeline_calibration import (
+            calibrate_deal_timeline,
+        )
+        target_prior = await get_target_prior_deals(
+            deal_params.target_name,
+        )
+        timeline_stats = await calibrate_deal_timeline(
+            comparable_groups, target_prior,
+        )
+        logger.info(
+            f"Timeline calibration: "
+            f"{timeline_stats.get('comp_count', 0)} comps, "
+            f"{timeline_stats.get('comp_with_milestones', 0)} "
+            f"with milestones"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Timeline calibration failed (using state machine "
+            f"fallback): {e}"
+        )
+
+    # ═══════════════════════════════════════════════════════
     # Stage 4: Timeline assembly + Prediction logging
     # ═══════════════════════════════════════════════════════
     try:
         report = await assemble_timeline(
-            simulation, press_release_data, merger_agreement, deal_params
+            simulation, press_release_data,
+            merger_agreement, deal_params,
+            timeline_stats=timeline_stats,
         )
         report.overlap_type = overlap_assessment.overlap_type
         report.overlap_severity = overlap_assessment.overlap_severity
