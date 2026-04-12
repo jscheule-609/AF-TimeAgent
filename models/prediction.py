@@ -23,6 +23,7 @@ class PredictionRecord(BaseModel):
     enforcement_regime: str = "normal"
     comparable_deals_used: int = 0
     jurisdictions_modeled: list[str] = []
+    guidance_reconciliation: Optional[dict] = None
     actual_close_date: Optional[date] = None
     actual_timeline_days: Optional[int] = None
     actual_outcome: str = "pending"

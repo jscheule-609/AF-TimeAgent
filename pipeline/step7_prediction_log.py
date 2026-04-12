@@ -35,6 +35,12 @@ async def log_prediction(report: DealTimingReport, deal_pk: int | None = None) -
         enforcement_regime=report.enforcement_regime,
         comparable_deals_used=report.comparable_deals_used,
         jurisdictions_modeled=[],
+        guidance_reconciliation=(
+            report.guidance_reconciliation.model_dump(
+                mode="json"
+            )
+            if report.guidance_reconciliation else None
+        ),
     )
 
     try:

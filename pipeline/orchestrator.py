@@ -199,6 +199,33 @@ async def run_timing_estimation(
         logger.error(f"Timeline assembly failed: {e}")
         raise PipelineError("stage4_assembly", str(e))
 
+    # ═══════════════════════════════════════════════════════
+    # Stage 4b: Guidance reconciliation (diagnostic)
+    # ═══════════════════════════════════════════════════════
+    if guidance_anchor:
+        try:
+            from pipeline.step8_guidance_reconciliation import (
+                reconcile_with_guidance,
+            )
+            report = await reconcile_with_guidance(
+                report, guidance_anchor, deal_params,
+                merger_agreement, simulation,
+                comparable_groups, timeline_stats,
+            )
+            if report.guidance_reconciliation:
+                gr = report.guidance_reconciliation
+                logger.info(
+                    f"Guidance reconciliation: "
+                    f"{gr.flag} "
+                    f"gap={gr.gap_days}d "
+                    f"explained={gr.explained_days}d "
+                    f"unexplained={gr.unexplained_days}d"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Guidance reconciliation failed: {e}"
+            )
+
     # Log prediction (non-fatal if it fails)
     try:
         await log_prediction(report, deal_params.mars_deal_pk)

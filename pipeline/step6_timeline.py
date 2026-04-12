@@ -114,23 +114,10 @@ async def assemble_timeline(
         p75_days = simulation.critical_path_duration_p75 or 0
         p90_days = simulation.critical_path_duration_p90 or 0
 
-    # ── Guidance anchor ──────────────────────────────────
-    # The company/AJ guidance is the strongest signal for
-    # expected close timing.  Use it as a floor — our model
-    # should not predict earlier than what the parties
-    # themselves expect.
-    if guidance_anchor and guidance_anchor > announcement:
-        guidance_days = (guidance_anchor - announcement).days
-        old_p50 = p50_days
-        p50_days = max(p50_days, guidance_days * 0.85)
-        p75_days = max(p75_days, guidance_days)
-        p90_days = max(p90_days, guidance_days * 1.15)
-        if p50_days != old_p50:
-            logger.info(
-                f"Guidance anchor shifted P50: "
-                f"{old_p50:.0f} -> {p50_days:.0f} days "
-                f"(anchor={guidance_anchor})"
-            )
+    # NOTE: guidance reconciliation happens in step8 —
+    # this step produces a pure model-driven estimate.
+    # step8 then compares to guidance and either adjusts
+    # specific components or flags discrepancies.
 
     p50_date = (
         announcement + timedelta(days=int(p50_days))

@@ -67,11 +67,15 @@ async def store_prediction(prediction: dict) -> str:
                 prediction_date, p50_close_date, p75_close_date, p90_close_date,
                 predicted_critical_path, predicted_scenarios, predicted_milestones,
                 predicted_risk_flags, overlap_type, overlap_severity,
-                enforcement_regime, comparable_deals_used, jurisdictions_modeled,
+                enforcement_regime, comparable_deals_used,
+                jurisdictions_modeled,
+                guidance_reconciliation,
                 model_version
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-                $12::jsonb, $13, $14, $15, $16, $17::jsonb, $18
+                $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                $10::jsonb, $11::jsonb, $12::jsonb,
+                $13, $14, $15, $16, $17::jsonb,
+                $18::jsonb, $19
             )
             """,
             prediction["prediction_id"],
@@ -83,14 +87,30 @@ async def store_prediction(prediction: dict) -> str:
             prediction.get("p75_close_date"),
             prediction.get("p90_close_date"),
             prediction.get("predicted_critical_path", ""),
-            json.dumps(prediction.get("predicted_scenarios", []), default=_json_serial),
-            json.dumps(prediction.get("predicted_milestones", []), default=_json_serial),
-            json.dumps(prediction.get("predicted_risk_flags", []), default=_json_serial),
+            json.dumps(
+                prediction.get("predicted_scenarios", []),
+                default=_json_serial,
+            ),
+            json.dumps(
+                prediction.get("predicted_milestones", []),
+                default=_json_serial,
+            ),
+            json.dumps(
+                prediction.get("predicted_risk_flags", []),
+                default=_json_serial,
+            ),
             prediction.get("overlap_type", ""),
             prediction.get("overlap_severity", ""),
             prediction.get("enforcement_regime", "normal"),
             prediction.get("comparable_deals_used", 0),
-            json.dumps(prediction.get("jurisdictions_modeled", []), default=_json_serial),
+            json.dumps(
+                prediction.get("jurisdictions_modeled", []),
+                default=_json_serial,
+            ),
+            json.dumps(
+                prediction.get("guidance_reconciliation"),
+                default=_json_serial,
+            ) if prediction.get("guidance_reconciliation") else None,
             prediction.get("model_version", "0.1.0"),
         )
         return prediction["prediction_id"]
