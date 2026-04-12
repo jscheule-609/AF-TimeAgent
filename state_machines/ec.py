@@ -113,26 +113,69 @@ class ECStateMachine(BaseRegulatoryStateMachine):
         pre_notif_mult = 1.0
         ec_regime = self._get_regime(climate, "EC")
         if ec_regime:
-            pre_notif_mult = ec_regime.get("pre_notification_multiplier", 1.0)
+            pre_notif_mult = ec_regime.get(
+                "pre_notification_multiplier", 1.0,
+            )
 
+        # Calibrated durations from config/calibration.json
+        from config.calibration import get_duration
+        cal_p1_p50 = get_duration("ec", "phase1_durations", "p50")
+        cal_p1_p75 = get_duration("ec", "phase1_durations", "p75")
+        cal_p1_p90 = get_duration("ec", "phase1_durations", "p90")
+        cal_p2_p50 = get_duration("ec", "phase2_durations", "p50")
+        cal_p2_p75 = get_duration("ec", "phase2_durations", "p75")
+        cal_p2_p90 = get_duration("ec", "phase2_durations", "p90")
+
+        # Statutory defaults
         p1_cal = _working_to_calendar(EC_PHASE_1_WORKING_DAYS)
+        p1_ext = _working_to_calendar(
+            EC_PHASE_1_WORKING_DAYS + EC_PHASE_1_EXTENSION_WORKING_DAYS
+        )
         p2_cal = _working_to_calendar(EC_PHASE_2_WORKING_DAYS)
+        p2_ext = _working_to_calendar(
+            EC_PHASE_2_WORKING_DAYS + EC_PHASE_2_EXTENSION_WORKING_DAYS
+        )
+
+        # Use calibrated if available, else statutory
+        p1_p50 = int(cal_p1_p50) if cal_p1_p50 else p1_cal
+        p1_p75 = int(cal_p1_p75) if cal_p1_p75 else p1_cal + 7
+        p1_p90 = int(cal_p1_p90) if cal_p1_p90 else p1_ext
+        p2_p50 = int(cal_p2_p50) if cal_p2_p50 else p2_cal
+        p2_p75 = int(cal_p2_p75) if cal_p2_p75 else _working_to_calendar(105)
+        p2_p90 = int(cal_p2_p90) if cal_p2_p90 else p2_ext
+
+        pre_lo = EC_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[0]
+        pre_hi = EC_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[1]
 
         return {
             "not_filed": {"p50": 0, "p75": 0, "p90": 0},
             "pre_notification": {
-                "p50": int(EC_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[0] * pre_notif_mult),
+                "p50": int(pre_lo * pre_notif_mult),
                 "p75": int(55 * pre_notif_mult),
-                "p90": int(EC_PRE_NOTIFICATION_TYPICAL_DAYS_RANGE[1] * pre_notif_mult),
+                "p90": int(pre_hi * pre_notif_mult),
             },
             "filed": {"p50": 3, "p75": 5, "p90": 7},
-            "phase_1_review": {"p50": p1_cal, "p75": p1_cal + 7, "p90": _working_to_calendar(EC_PHASE_1_WORKING_DAYS + EC_PHASE_1_EXTENSION_WORKING_DAYS)},
-            "phase_1_cleared_unconditionally": {"p50": 0, "p75": 0, "p90": 0},
-            "phase_1_cleared_with_commitments": {"p50": 5, "p75": 10, "p90": 14},
-            "phase_2_opened": {"p50": p2_cal, "p75": _working_to_calendar(105), "p90": _working_to_calendar(EC_PHASE_2_WORKING_DAYS + EC_PHASE_2_EXTENSION_WORKING_DAYS)},
-            "phase_2_cleared_unconditionally": {"p50": 0, "p75": 0, "p90": 0},
-            "phase_2_cleared_with_commitments": {"p50": 10, "p75": 15, "p90": 20},
-            "phase_2_prohibited": {"p50": 0, "p75": 0, "p90": 0},
+            "phase_1_review": {
+                "p50": p1_p50, "p75": p1_p75, "p90": p1_p90,
+            },
+            "phase_1_cleared_unconditionally": {
+                "p50": 0, "p75": 0, "p90": 0,
+            },
+            "phase_1_cleared_with_commitments": {
+                "p50": 5, "p75": 10, "p90": 14,
+            },
+            "phase_2_opened": {
+                "p50": p2_p50, "p75": p2_p75, "p90": p2_p90,
+            },
+            "phase_2_cleared_unconditionally": {
+                "p50": 0, "p75": 0, "p90": 0,
+            },
+            "phase_2_cleared_with_commitments": {
+                "p50": 10, "p75": 15, "p90": 20,
+            },
+            "phase_2_prohibited": {
+                "p50": 0, "p75": 0, "p90": 0,
+            },
             "withdrawn": {"p50": 0, "p75": 0, "p90": 0},
         }
 

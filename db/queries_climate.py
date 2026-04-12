@@ -1,29 +1,57 @@
-"""Enforcement climate and trend queries against the MARS database."""
+"""Enforcement climate and trend queries against the MARS v2 database."""
 from db.connection import get_pool
 
 
 async def get_enforcement_stats(months: int = 24) -> dict:
-    """Get aggregate enforcement statistics for the last N months."""
+    """Get aggregate enforcement statistics for the last N months.
+
+    v2: uses regulatory_reviews with jurisdiction_code filters
+    instead of deal_antitrust / deal_ec_antitrust / deal_cma_antitrust.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             SELECT
-                COUNT(*) as total_deals,
-                COUNT(*) FILTER (WHERE da.has_second_request = TRUE) as second_requests,
-                COUNT(*) FILTER (WHERE da.has_early_termination = TRUE) as early_terminations,
-                AVG(d.timeline_days) as avg_timeline,
-                COUNT(*) FILTER (WHERE ec.phase_2_date IS NOT NULL) as ec_phase_2_count,
-                COUNT(*) FILTER (WHERE ec.is_ec_approval_required = TRUE) as ec_total,
-                COUNT(*) FILTER (WHERE cma.cma_phase_2_start_date IS NOT NULL) as cma_phase_2_count,
-                COUNT(*) FILTER (WHERE cma.is_cma_approval_required = TRUE) as cma_total,
-                COUNT(*) FILTER (WHERE dl.antitrust_litigation = TRUE) as litigation_count
+                COUNT(*) AS total_deals,
+                COUNT(*) FILTER (
+                    WHERE rr_us.phase_2_start_date IS NOT NULL
+                ) AS second_requests,
+                COUNT(*) FILTER (
+                    WHERE rr_us.review_id IS NOT NULL
+                    AND rr_us.phase_1_outcome = 'cleared'
+                    AND rr_us.phase_2_start_date IS NULL
+                ) AS early_terminations,
+                AVG(d.timeline_days) AS avg_timeline,
+                COUNT(*) FILTER (
+                    WHERE rr_eu.phase_2_start_date IS NOT NULL
+                ) AS ec_phase_2_count,
+                COUNT(*) FILTER (
+                    WHERE rr_eu.review_id IS NOT NULL
+                ) AS ec_total,
+                COUNT(*) FILTER (
+                    WHERE rr_gb.phase_2_start_date IS NOT NULL
+                ) AS cma_phase_2_count,
+                COUNT(*) FILTER (
+                    WHERE rr_gb.review_id IS NOT NULL
+                ) AS cma_total,
+                COUNT(*) FILTER (
+                    WHERE dl.antitrust_litigation = TRUE
+                ) AS litigation_count
             FROM deals d
-            LEFT JOIN deal_antitrust da ON d.deal_pk = da.deal_pk
-            LEFT JOIN deal_ec_antitrust ec ON d.deal_pk = ec.deal_pk
-            LEFT JOIN deal_cma_antitrust cma ON d.deal_pk = cma.deal_pk
-            LEFT JOIN deal_litigation dl ON d.deal_pk = dl.deal_pk
-            WHERE d.date_announced >= NOW() - ($1 || ' months')::interval
+            LEFT JOIN regulatory_reviews rr_us
+                ON d.deal_pk = rr_us.deal_pk
+                AND rr_us.jurisdiction_code = 'US'
+            LEFT JOIN regulatory_reviews rr_eu
+                ON d.deal_pk = rr_eu.deal_pk
+                AND rr_eu.jurisdiction_code = 'EU'
+            LEFT JOIN regulatory_reviews rr_gb
+                ON d.deal_pk = rr_gb.deal_pk
+                AND rr_gb.jurisdiction_code = 'GB'
+            LEFT JOIN deal_litigation dl
+                ON d.deal_pk = dl.deal_pk
+            WHERE d.date_announced >= NOW()
+                - ($1 || ' months')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
             """,
             str(months),
@@ -37,15 +65,21 @@ async def get_sector_enforcement_intensity() -> list[dict]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT d.industry, d.gics_sector,
-                COUNT(*) FILTER (WHERE dl.antitrust_litigation = TRUE) as litigation_count,
+            SELECT
+                d.industry, d.gics_sector,
+                COUNT(*) FILTER (
+                    WHERE dl.antitrust_litigation = TRUE
+                ) AS litigation_count,
                 COUNT(*) FILTER (
                     WHERE d.deal_outcome = 'Terminated'
-                    AND d.termination_reason ILIKE '%regulat%'
-                ) as regulatory_breaks
+                    AND d.termination_reason
+                        ILIKE '%regulat%'
+                ) AS regulatory_breaks
             FROM deals d
-            LEFT JOIN deal_litigation dl ON d.deal_pk = dl.deal_pk
-            WHERE d.date_announced >= NOW() - INTERVAL '36 months'
+            LEFT JOIN deal_litigation dl
+                ON d.deal_pk = dl.deal_pk
+            WHERE d.date_announced
+                >= NOW() - INTERVAL '36 months'
             GROUP BY d.industry, d.gics_sector
             """
         )

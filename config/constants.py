@@ -96,6 +96,13 @@ DEAL_SIZE_BUCKETS = {
 }
 
 # ═══════════════════════════════════════════════════════════
+# Calibration Thresholds
+# ═══════════════════════════════════════════════════════════
+# Minimum calibrated activation rate to instantiate a state machine.
+# Below this, the jurisdiction is too rare to model.
+MIN_ACTIVATION_RATE_THRESHOLD = 0.03
+
+# ═══════════════════════════════════════════════════════════
 # Geographic Revenue Thresholds for Jurisdictional Triggers
 # ═══════════════════════════════════════════════════════════
 JURISDICTION_REVENUE_THRESHOLDS = {

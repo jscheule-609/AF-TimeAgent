@@ -1,38 +1,80 @@
-"""Comparable deal queries against the MARS database."""
+"""Comparable deal queries against the MARS v2 database.
+
+All jurisdiction-specific antitrust tables are consolidated into
+``regulatory_reviews`` with a ``jurisdiction_code`` column.  Column
+aliases preserve the v1 names consumed by ``_row_to_comparable()``
+in ``pipeline/step3_comparables.py`` to minimize downstream changes.
+"""
 from typing import Optional
 from db.connection import get_pool
 
 
+# ── v2 JOINs ────────────────────────────────────────────────
 _REGULATORY_JOINS = """
-LEFT JOIN deal_antitrust da ON d.deal_pk = da.deal_pk
-LEFT JOIN deal_ec_antitrust ec ON d.deal_pk = ec.deal_pk
-LEFT JOIN deal_samr_antitrust samr ON d.deal_pk = samr.deal_pk
-LEFT JOIN deal_cma_antitrust cma ON d.deal_pk = cma.deal_pk
-LEFT JOIN deal_cfius cfius ON d.deal_pk = cfius.deal_pk
+LEFT JOIN regulatory_reviews rr_us
+    ON d.deal_pk = rr_us.deal_pk AND rr_us.jurisdiction_code = 'US'
+LEFT JOIN regulatory_reviews rr_eu
+    ON d.deal_pk = rr_eu.deal_pk AND rr_eu.jurisdiction_code = 'EU'
+LEFT JOIN regulatory_reviews rr_cn
+    ON d.deal_pk = rr_cn.deal_pk AND rr_cn.jurisdiction_code = 'CN'
+LEFT JOIN regulatory_reviews rr_gb
+    ON d.deal_pk = rr_gb.deal_pk AND rr_gb.jurisdiction_code = 'GB'
+LEFT JOIN regulatory_reviews rr_cfius
+    ON d.deal_pk = rr_cfius.deal_pk AND rr_cfius.jurisdiction_code = 'CFIUS'
 LEFT JOIN deal_competitive_analysis dca ON d.deal_pk = dca.deal_pk
 LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
-LEFT JOIN deal_regulatory_efforts dre ON d.deal_pk = dre.deal_pk
+LEFT JOIN deal_protections dp ON d.deal_pk = dp.deal_pk
 """
 
+# Aliases map v2 columns → v1 column names so _row_to_comparable() works unchanged
 _REGULATORY_COLUMNS = """
-    da.is_hsr_applicable, da.has_second_request, da.has_early_termination,
-    da.hsr_filing_date, da.early_termination_date,
-    da.second_request_date, da.second_request_clearance_date,
-    ec.is_ec_approval_required, ec.ec_filing_date, ec.phase_1_cleared_date,
-    ec.phase_2_date, ec.ec_final_clearance_date, ec.phase_1_outcome, ec.phase_2_outcome,
-    samr.is_samr_approval_required, samr.samr_filing_date, samr.samr_clearance_date,
-    samr.samr_clearance_phase,
-    cma.is_cma_approval_required, cma.cma_filing_date,
-    cma.cma_phase_1_outcome, cma.cma_phase_2_outcome,
-    cfius.is_cfius_review_required,
-    dca.product_market_overlap, dca.geographic_market_overlap,
-    dca.combined_market_share_pct, dca.hhi_delta,
-    dca.target_lists_acquirer_competitor, dca.acquirer_lists_target_competitor,
-    dca.remedy_feasibility, dca.second_request_received,
-    dma.long_stop_date AS outside_date,
-    dma.extended_long_stop_date AS extended_outside_date,
-    dre.efforts_standard, dre.divestiture_commitment, dre.litigation_commitment,
-    dre.required_approvals
+    (rr_us.review_id IS NOT NULL)               AS is_hsr_applicable,
+    (rr_us.phase_2_start_date IS NOT NULL)       AS has_second_request,
+    (rr_us.phase_1_outcome = 'cleared'
+     AND rr_us.phase_2_start_date IS NULL)       AS has_early_termination,
+    rr_us.filing_date                            AS hsr_filing_date,
+    CASE WHEN rr_us.phase_1_outcome = 'cleared'
+              AND rr_us.phase_2_start_date IS NULL
+         THEN rr_us.clearance_date END           AS early_termination_date,
+    rr_us.phase_2_start_date                     AS second_request_date,
+    CASE WHEN rr_us.phase_2_start_date IS NOT NULL
+         THEN rr_us.clearance_date END           AS second_request_clearance_date,
+
+    (rr_eu.review_id IS NOT NULL)                AS is_ec_approval_required,
+    rr_eu.filing_date                            AS ec_filing_date,
+    CASE WHEN rr_eu.phase_1_outcome IS NOT NULL
+              AND rr_eu.phase_2_start_date IS NULL
+         THEN rr_eu.clearance_date END           AS phase_1_cleared_date,
+    rr_eu.phase_2_start_date                     AS phase_2_date,
+    rr_eu.clearance_date                         AS ec_final_clearance_date,
+    rr_eu.phase_1_outcome,
+    rr_eu.phase_2_outcome,
+
+    (rr_cn.review_id IS NOT NULL)                AS is_samr_approval_required,
+    rr_cn.filing_date                            AS samr_filing_date,
+    rr_cn.clearance_date                         AS samr_clearance_date,
+    rr_cn.review_status                          AS samr_clearance_phase,
+
+    (rr_gb.review_id IS NOT NULL)                AS is_cma_approval_required,
+    rr_gb.filing_date                            AS cma_filing_date,
+    rr_gb.phase_1_outcome                        AS cma_phase_1_outcome,
+    rr_gb.phase_2_outcome                        AS cma_phase_2_outcome,
+
+    (rr_cfius.review_id IS NOT NULL)             AS is_cfius_review_required,
+
+    dca.product_market_overlap,
+    dca.geographic_market_overlap,
+    dca.combined_market_share_pct,
+    dca.hhi_delta,
+    dca.antitrust_risk_rating,
+    dca.remedy_feasibility,
+
+    dma.long_stop_date                           AS outside_date,
+    dma.extended_long_stop_date                  AS extended_outside_date,
+
+    dp.efforts_standard,
+    (dp.divestiture_cap IS NOT NULL)             AS divestiture_commitment,
+    dp.hell_or_high_water                        AS litigation_commitment
 """
 
 _BASE_DEAL_COLUMNS = """
@@ -149,25 +191,34 @@ async def get_size_matched_deals(
 
 
 async def get_regulatory_milestones(deal_pk: int) -> list[dict]:
-    """Get all regulatory timeline milestones for a specific deal."""
+    """Get all regulatory timeline milestones for a specific deal.
+
+    v2: regulatory_review_events is linked via review_id, not deal_pk.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM regulatory_detail_events WHERE deal_pk = $1 ORDER BY event_date",
+            """
+            SELECT rre.*
+            FROM regulatory_review_events rre
+            JOIN regulatory_reviews rr ON rre.review_id = rr.review_id
+            WHERE rr.deal_pk = $1
+            ORDER BY rre.event_date
+            """,
             deal_pk,
         )
         return [dict(r) for r in rows]
 
 
 async def get_proxy_timeline_comparables(industry: str) -> list[dict]:
-    """Get proxy/S-4 timeline data from comparable deals."""
+    """Get proxy/S-4 timeline data from comparable deals (v2: deal_timeline_actuals)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT dpt.*, d.timeline_days, d.date_announced, d.actual_completion_date
-            FROM deal_proxy_timeline dpt
-            JOIN deals d ON dpt.deal_pk = d.deal_pk
+            SELECT dta.*, d.timeline_days, d.date_announced, d.actual_completion_date
+            FROM deal_timeline_actuals dta
+            JOIN deals d ON dta.deal_pk = d.deal_pk
             WHERE d.industry = $1
               AND d.deal_outcome = 'Closed'
               AND d.date_announced >= NOW() - INTERVAL '3 years'

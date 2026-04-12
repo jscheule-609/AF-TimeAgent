@@ -1,11 +1,16 @@
 """
-Read autoresearch-populated data from MARS.
+Read autoresearch-populated data from MARS v2.
 
 These functions query tables that AF-ARB_AUTORESEARCH writes to
 and return AF-TimeAgent Pydantic models. TimeAgent NEVER writes
 to these tables — it only reads.
+
+v2 migration (2026-04-12):
+  - break_fees → deal_break_fees  (fee_direction replaces party+fee_type)
+  - deal_regulatory_efforts → deal_protections + deal_conditions
+  - 5 antitrust tables → regulatory_reviews (jurisdiction_code filter)
+  - deal_dma_terms unchanged (still exists in v2)
 """
-import json
 import logging
 from datetime import date
 from dateutil.relativedelta import relativedelta
@@ -13,7 +18,7 @@ from typing import Optional
 
 from db.connection import get_pool
 from models.deal import (
-    DealParameters, DealStructure, BuyerType, classify_buyer_type,
+    DealParameters, DealStructure, classify_buyer_type,
 )
 from models.documents import ParsedMergerAgreement, PressReleaseData
 
@@ -30,6 +35,15 @@ _APPROVAL_MAP = {
     "samr": "SAMR",
     "state administration for market regulation": "SAMR",
     "cfius": "CFIUS", "accc": "ACCC",
+}
+
+# Map v2 jurisdiction_code → TimeAgent jurisdiction name
+_JURISDICTION_CODE_MAP = {
+    "US": "HSR",
+    "EU": "EC",
+    "GB": "CMA",
+    "CN": "SAMR",
+    "CFIUS": "CFIUS",
 }
 
 
@@ -148,8 +162,8 @@ def _map_consideration(
 async def load_merger_terms_from_mars(
     deal_pk: int,
 ) -> Optional[ParsedMergerAgreement]:
-    """Load merger agreement data from deal_dma_terms + break_fees +
-    deal_regulatory_efforts.
+    """Load merger agreement data from deal_dma_terms + deal_break_fees +
+    deal_protections + deal_conditions.
 
     Returns None if no deal_dma_terms row exists (autoresearch
     has not yet profiled this deal).
@@ -163,32 +177,47 @@ async def load_merger_terms_from_mars(
         if not dma:
             return None
 
+        # v2: break_fees → deal_break_fees
         fees = await conn.fetch(
-            "SELECT * FROM break_fees WHERE deal_pk = $1",
-            deal_pk,
-        )
-        efforts = await conn.fetchrow(
-            "SELECT * FROM deal_regulatory_efforts "
-            "WHERE deal_pk = $1",
+            "SELECT * FROM deal_break_fees WHERE deal_pk = $1",
             deal_pk,
         )
 
-    # Parse fees
+        # v2: deal_regulatory_efforts → deal_protections
+        prot = await conn.fetchrow(
+            """SELECT efforts_standard, divestiture_cap,
+                      hell_or_high_water
+               FROM deal_protections WHERE deal_pk = $1""",
+            deal_pk,
+        )
+
+        # v2: required approvals from deal_conditions
+        cond_rows = await conn.fetch(
+            """SELECT condition_name
+               FROM deal_conditions
+               WHERE deal_pk = $1
+                 AND condition_family IN ('antitrust', 'foreign_investment')""",
+            deal_pk,
+        )
+
+    # Parse fees — v2 uses fee_direction instead of party + fee_type
     target_fee = None
     reverse_fee = None
     for fee in fees:
-        party = (fee["party"] or "").lower()
-        fee_type = (fee["fee_type"] or "").lower()
-        amount = float(fee["amount_usd"] or fee["amount"] or 0)
-        if "target" in party and "termination" in fee_type:
+        direction = (fee.get("fee_direction") or "").lower()
+        amount = float(fee.get("amount") or 0)
+        if not amount and fee.get("pct_of_equity_value"):
+            # Fallback: percentage-based fee, skip dollar amount
+            continue
+        if "target_to_acquirer" in direction or "target" in direction:
             target_fee = amount
-        elif "acquirer" in party or "reverse" in fee_type:
+        elif "acquirer_to_target" in direction or "reverse" in direction:
             reverse_fee = amount
 
     # Parse outside date from deal_dma_terms
     outside_date = dma["long_stop_date"]
     extended_outside_date = dma.get("extended_long_stop_date")
-    extensions = dma["long_stop_extensions"] or 0
+    extensions = dma.get("long_stop_extensions") or 0
     extension_desc = []
     if outside_date and extensions > 0:
         if not extended_outside_date:
@@ -200,40 +229,25 @@ async def load_merger_terms_from_mars(
             f"{extensions}-month extension available"
         ]
 
-    # Parse regulatory efforts
+    # Parse regulatory efforts from deal_protections + deal_conditions
     efforts_standard = "unknown"
     required_approvals: list[str] = []
     divestiture_commitment: str | None = None
     litigation_commitment = False
 
-    if efforts:
+    if prot:
         efforts_standard = (
-            efforts["efforts_standard"] or "unknown"
+            prot["efforts_standard"] or "unknown"
         )
-        raw_approvals = efforts["required_approvals"]
-        if isinstance(raw_approvals, str):
-            try:
-                raw_approvals = json.loads(raw_approvals)
-            except (json.JSONDecodeError, TypeError):
-                raw_approvals = [raw_approvals]
-        if isinstance(raw_approvals, list):
-            required_approvals = _normalize_approvals(
-                raw_approvals
-            )
-        elif raw_approvals:
-            required_approvals = _normalize_approvals(
-                list(raw_approvals)
-            )
-        if efforts["divestiture_commitment"]:
-            divestiture_commitment = (
-                efforts["divestiture_cap"]
-                or "yes (no cap specified)"
-            )
+        if prot["divestiture_cap"]:
+            divestiture_commitment = prot["divestiture_cap"]
         else:
             divestiture_commitment = "no"
-        litigation_commitment = bool(
-            efforts["litigation_commitment"]
-        )
+        litigation_commitment = bool(prot["hell_or_high_water"])
+
+    if cond_rows:
+        raw_approvals = [r["condition_name"] for r in cond_rows]
+        required_approvals = _normalize_approvals(raw_approvals)
 
     return ParsedMergerAgreement(
         efforts_standard=efforts_standard,
@@ -243,8 +257,10 @@ async def load_merger_terms_from_mars(
         extended_outside_date=extended_outside_date,
         target_termination_fee_usd=target_fee,
         reverse_termination_fee_usd=reverse_fee,
-        has_ticking_fee=bool(dma["ticking_fee_present"]),
-        ticking_fee_details=dma["ticking_fee_details"],
+        has_ticking_fee=bool(
+            dma.get("ticking_fee") or dma.get("ticking_fee_present")
+        ),
+        ticking_fee_details=dma.get("ticking_fee_details"),
         divestiture_commitment=divestiture_commitment,
         litigation_commitment=litigation_commitment,
     )
@@ -257,7 +273,7 @@ async def load_merger_terms_from_mars(
 async def load_press_release_data_from_mars(
     deal_pk: int,
 ) -> Optional[PressReleaseData]:
-    """Synthesize PressReleaseData from deals + regulatory tables.
+    """Synthesize PressReleaseData from deals + regulatory_reviews.
 
     Returns None if deal has no date_announced.
     """
@@ -269,45 +285,30 @@ async def load_press_release_data_from_mars(
                 d.date_announced,
                 d.date_expected_close,
                 d.date_expected_close_parsed,
-                dma.long_stop_date AS outside_date,
-                da.is_hsr_applicable,
-                ec.is_ec_approval_required,
-                cma.is_cma_approval_required,
-                cfius.is_cfius_review_required,
-                samr.is_samr_approval_required
+                dma.long_stop_date AS outside_date
             FROM deals d
-            LEFT JOIN deal_dma_terms dma
-                ON d.deal_pk = dma.deal_pk
-            LEFT JOIN deal_antitrust da
-                ON d.deal_pk = da.deal_pk
-            LEFT JOIN deal_ec_antitrust ec
-                ON d.deal_pk = ec.deal_pk
-            LEFT JOIN deal_cma_antitrust cma
-                ON d.deal_pk = cma.deal_pk
-            LEFT JOIN deal_cfius cfius
-                ON d.deal_pk = cfius.deal_pk
-            LEFT JOIN deal_samr_antitrust samr
-                ON d.deal_pk = samr.deal_pk
+            LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
             WHERE d.deal_pk = $1
             """,
             deal_pk,
         )
 
-    if not row or not row["date_announced"]:
-        return None
+        if not row or not row["date_announced"]:
+            return None
 
-    # Derive mentioned jurisdictions from regulatory flags
+        # Get jurisdictions from regulatory_reviews
+        jur_rows = await conn.fetch(
+            "SELECT jurisdiction_code FROM regulatory_reviews WHERE deal_pk = $1",
+            deal_pk,
+        )
+
+    # Map jurisdiction_code → TimeAgent names
     jurisdictions = []
-    if row["is_hsr_applicable"]:
-        jurisdictions.append("HSR")
-    if row["is_ec_approval_required"]:
-        jurisdictions.append("EC")
-    if row["is_cma_approval_required"]:
-        jurisdictions.append("CMA")
-    if row["is_cfius_review_required"]:
-        jurisdictions.append("CFIUS")
-    if row["is_samr_approval_required"]:
-        jurisdictions.append("SAMR")
+    for jr in jur_rows:
+        code = jr["jurisdiction_code"]
+        mapped = _JURISDICTION_CODE_MAP.get(code)
+        if mapped:
+            jurisdictions.append(mapped)
 
     outside_str = None
     if row["outside_date"]:
@@ -329,58 +330,26 @@ async def load_press_release_data_from_mars(
 async def load_regulatory_flags_from_mars(
     deal_pk: int,
 ) -> dict[str, bool]:
-    """Load jurisdiction applicability flags from MARS.
+    """Load jurisdiction applicability flags from MARS v2.
 
-    Returns dict like {"HSR": True, "EC": True, "CMA": False}.
-    Only includes jurisdictions where autoresearch has data.
-    Empty dict if no regulatory tables populated.
+    Queries regulatory_reviews — if a row exists for a jurisdiction,
+    the jurisdiction is applicable.
+
+    Returns dict like {"HSR": True, "EC": True}.
+    Empty dict if no regulatory reviews populated.
     """
     pool = await get_pool()
-    flags: dict[str, bool] = {}
-
     async with pool.acquire() as conn:
-        da = await conn.fetchrow(
-            "SELECT is_hsr_applicable FROM deal_antitrust "
-            "WHERE deal_pk = $1",
+        rows = await conn.fetch(
+            "SELECT jurisdiction_code FROM regulatory_reviews WHERE deal_pk = $1",
             deal_pk,
         )
-        if da and da["is_hsr_applicable"] is not None:
-            flags["HSR"] = bool(da["is_hsr_applicable"])
 
-        ec = await conn.fetchrow(
-            "SELECT is_ec_approval_required "
-            "FROM deal_ec_antitrust WHERE deal_pk = $1",
-            deal_pk,
-        )
-        if ec and ec["is_ec_approval_required"] is not None:
-            flags["EC"] = bool(ec["is_ec_approval_required"])
-
-        cma = await conn.fetchrow(
-            "SELECT is_cma_approval_required "
-            "FROM deal_cma_antitrust WHERE deal_pk = $1",
-            deal_pk,
-        )
-        if cma and cma["is_cma_approval_required"] is not None:
-            flags["CMA"] = bool(cma["is_cma_approval_required"])
-
-        cfius = await conn.fetchrow(
-            "SELECT is_cfius_review_required "
-            "FROM deal_cfius WHERE deal_pk = $1",
-            deal_pk,
-        )
-        if cfius and cfius["is_cfius_review_required"] is not None:
-            flags["CFIUS"] = bool(
-                cfius["is_cfius_review_required"]
-            )
-
-        samr = await conn.fetchrow(
-            "SELECT is_samr_approval_required "
-            "FROM deal_samr_antitrust WHERE deal_pk = $1",
-            deal_pk,
-        )
-        if samr and samr["is_samr_approval_required"] is not None:
-            flags["SAMR"] = bool(
-                samr["is_samr_approval_required"]
-            )
+    flags: dict[str, bool] = {}
+    for r in rows:
+        code = r["jurisdiction_code"]
+        mapped = _JURISDICTION_CODE_MAP.get(code)
+        if mapped:
+            flags[mapped] = True
 
     return flags

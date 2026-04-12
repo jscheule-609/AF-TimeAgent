@@ -205,12 +205,23 @@ class HSRStateMachine(BaseRegulatoryStateMachine):
         if hsr_regime:
             regime_mult = hsr_regime.get("second_request_multiplier", 1.0)
 
-        comp_median = comparable_stats.get("hsr_median_days_to_clear", 35)
+        # Calibrated overall clearance durations (filing → clearance)
+        # from scripts/calibration_report.py → config/calibration.json
+        from config.calibration import get_duration
+        cal_p50 = get_duration("hsr", "durations", "p50")
+        cal_p75 = get_duration("hsr", "durations", "p75")
+        cal_p90 = get_duration("hsr", "durations", "p90")
+
+        # Use calibrated values for the waiting_period state if available,
+        # otherwise fall back to statutory constants.
+        wp_p50 = int(cal_p50) if cal_p50 else HSR_INITIAL_WAITING_PERIOD_DAYS
+        wp_p75 = int(cal_p75) if cal_p75 else 30
+        wp_p90 = int(cal_p90) if cal_p90 else 30
 
         return {
             "not_filed": {"p50": 0, "p75": 0, "p90": 0},
             "filed": {"p50": 5, "p75": 7, "p90": 10},
-            "waiting_period": {"p50": HSR_INITIAL_WAITING_PERIOD_DAYS, "p75": 30, "p90": 30},
+            "waiting_period": {"p50": wp_p50, "p75": wp_p75, "p90": wp_p90},
             "early_termination": {
                 "p50": HSR_EARLY_TERMINATION_TYPICAL_DAYS[0],
                 "p75": HSR_EARLY_TERMINATION_TYPICAL_DAYS[1],

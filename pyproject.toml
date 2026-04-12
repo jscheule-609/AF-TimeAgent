@@ -10,10 +10,12 @@ dependencies = [
     "numpy>=1.26.0",
     "python-dotenv>=1.0.0",
     "python-dateutil>=2.8.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [tool.setuptools.packages.find]
-include = ["config*", "models*", "db*", "parsers*", "scoring*", "state_machines*", "pipeline*", "output*", "scripts*", "tests*"]
+include = ["config*", "models*", "db*", "parsers*", "scoring*", "state_machines*", "pipeline*", "output*", "scripts*", "tests*", "api*"]
 
 [project.optional-dependencies]
 dev = [

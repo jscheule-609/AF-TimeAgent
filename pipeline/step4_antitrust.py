@@ -64,7 +64,7 @@ async def assess_antitrust_overlap(
 
 
 def _build_from_mars(mars: dict) -> OverlapAssessment:
-    """Build OverlapAssessment from MARS competitive analysis data."""
+    """Build OverlapAssessment from MARS v2 competitive analysis data."""
     overlap_type = "none"
     if mars.get("product_market_overlap"):
         overlap_type = "horizontal"
@@ -72,19 +72,19 @@ def _build_from_mars(mars: dict) -> OverlapAssessment:
         overlap_type = "horizontal"
 
     severity = "none"
+    # v2 provides antitrust_risk_rating directly
+    risk_rating = (mars.get("antitrust_risk_rating") or "").lower()
     share = mars.get("combined_market_share_pct")
-    if share:
+
+    if risk_rating in ("high", "medium", "low"):
+        severity = risk_rating
+    elif share:
         if share > 40:
             severity = "high"
         elif share > 25:
             severity = "medium"
         elif share > 10:
             severity = "low"
-
-    mutual = (
-        bool(mars.get("target_lists_acquirer_competitor"))
-        and bool(mars.get("acquirer_lists_target_competitor"))
-    )
 
     base_sr_prob = 0.03
     if severity == "high":
@@ -97,11 +97,11 @@ def _build_from_mars(mars: dict) -> OverlapAssessment:
     return OverlapAssessment(
         overlap_type=overlap_type,
         overlap_severity=severity,
-        mutual_competitor_flag=mutual,
+        mutual_competitor_flag=False,
         estimated_combined_share_pct=share,
         hhi_delta_estimate=mars.get("hhi_delta"),
         second_request_probability_base=base_sr_prob,
-        reasoning="Based on MARS competitive analysis data",
+        reasoning="Based on MARS v2 competitive analysis data",
     )
 
 

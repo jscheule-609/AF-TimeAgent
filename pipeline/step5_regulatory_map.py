@@ -7,7 +7,10 @@ import logging
 from models.documents import ParsedTenK, ParsedMergerAgreement
 from models.comparables import ComparableGroup
 from models.regulatory import JurisdictionRequirement
-from config.constants import JURISDICTION_REVENUE_THRESHOLDS
+from config.constants import (
+    JURISDICTION_REVENUE_THRESHOLDS,
+    MIN_ACTIVATION_RATE_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,15 +149,23 @@ def _check_comparable_precedent(
     comparable_groups: list[ComparableGroup],
     requirements: dict[str, JurisdictionRequirement],
 ) -> None:
-    """Check if comparable deals suggest jurisdictions not already identified."""
+    """Check if comparable deals suggest jurisdictions not yet identified.
+
+    For SAMR and CFIUS, also uses calibrated activation rates from
+    config/calibration.json when comparable precedent is inconclusive
+    (confidence < 0.8).
+    """
+    from config.calibration import get_rate
+
     all_deals = []
     for group in comparable_groups:
-        all_deals.extend(group.deals[:10])  # Top 10 per group
+        all_deals.extend(group.deals[:10])
 
     if not all_deals:
+        # No comparables — fall back to calibrated rates only
+        _apply_calibrated_activation(requirements)
         return
 
-    # Count jurisdiction frequency across comparables
     jur_counts: dict[str, int] = {}
     for deal in all_deals:
         for jur in deal.jurisdictions_required:
@@ -169,8 +180,49 @@ def _check_comparable_precedent(
                 is_required=True,
                 confidence=0.6,
                 source="comparable_precedent",
-                notes=f"{count}/{total} comparable deals required {jur} ({rate:.0%})",
+                notes=(
+                    f"{count}/{total} comparables "
+                    f"required {jur} ({rate:.0%})"
+                ),
             )
+
+    # For SAMR/CFIUS not yet in requirements, use calibrated
+    # activation rates as a weak signal
+    _apply_calibrated_activation(requirements)
+
+
+def _apply_calibrated_activation(
+    requirements: dict[str, JurisdictionRequirement],
+) -> None:
+    """Add SAMR/CFIUS from calibrated activation rates if missing.
+
+    Only fires when comparable precedent didn't already add them
+    and the calibrated rate exceeds MIN_ACTIVATION_RATE_THRESHOLD.
+    """
+    from config.calibration import get_rate
+
+    cal_map = {
+        "SAMR": "samr",
+        "CFIUS": "cfius",
+    }
+    for jur, cal_key in cal_map.items():
+        if jur in requirements:
+            continue
+        cal_rate = get_rate(cal_key)
+        if cal_rate is None:
+            continue
+        if cal_rate < MIN_ACTIVATION_RATE_THRESHOLD:
+            continue
+        requirements[jur] = JurisdictionRequirement(
+            jurisdiction=jur,
+            is_required=True,
+            confidence=min(cal_rate, 0.6),
+            source="calibrated_activation_rate",
+            notes=(
+                f"Calibrated {jur} activation rate: "
+                f"{cal_rate:.1%}"
+            ),
+        )
 
 
 def _check_cfius(
