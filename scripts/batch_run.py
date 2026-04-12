@@ -19,7 +19,6 @@ from db.connection import get_pool, close_pool
 async def main():
     pool = await get_pool()
     async with pool.acquire() as c:
-        await c.execute('DELETE FROM timing_predictions')
         deals = await c.fetch("""
             SELECT d.deal_pk, pt.ticker tgt,
                    CAST(d.deal_value_usd AS FLOAT) val,
@@ -28,10 +27,12 @@ async def main():
             LEFT JOIN parties pt ON d.deal_pk = pt.deal_pk
                 AND pt.role = 'target'
             WHERE d.deal_status = 'Active'
-              AND d.date_announced >= '2025-01-01'
               AND pt.ticker IS NOT NULL AND pt.ticker != ''
+              AND d.deal_pk NOT IN (
+                  SELECT deal_pk FROM timing_predictions
+                  WHERE deal_pk IS NOT NULL
+              )
             ORDER BY d.deal_value_usd DESC NULLS LAST
-            LIMIT 40
         """)
 
     results = []
