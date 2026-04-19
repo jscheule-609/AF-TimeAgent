@@ -16,10 +16,10 @@ tar czf "$ARCHIVE" \
   --exclude='.git' --exclude='.pytest_cache' --exclude='results' .
 
 echo "[2/3] Uploading to VPS..."
-scp -q "$ARCHIVE" house-mars:/root/AF-TimeAgent/
+scp -q "$ARCHIVE" house-mars:/root/repos/AF-TimeAgent/
 
 echo "[3/3] Building and deploying on VPS..."
-ssh house-mars "cd /root/AF-TimeAgent \
+ssh house-mars "cd /root/repos/AF-TimeAgent \
   && tar xzf $(basename "$ARCHIVE") && rm $(basename "$ARCHIVE") \
   && bash scripts/deploy_local.sh"
 
