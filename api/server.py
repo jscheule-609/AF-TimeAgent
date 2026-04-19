@@ -96,23 +96,6 @@ class HealthResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────
 
-@app.post("/predict/{deal_pk}", response_model=PredictionResult)
-async def predict_deal(deal_pk: int):
-    """Run timing prediction for a single deal."""
-    if not pool:
-        raise HTTPException(503, "Not initialized")
-
-    try:
-        report, elapsed = await _run_pipeline(deal_pk)
-    except ValueError as e:
-        raise HTTPException(404, str(e))
-    except Exception as e:
-        logger.error(f"Prediction failed for {deal_pk}: {e}")
-        raise HTTPException(500, f"Prediction failed: {e}")
-
-    return _report_to_result(report, elapsed)
-
-
 @app.post("/predict/batch")
 async def predict_batch(count: int = 20):
     """Predict N most recent active deals."""
@@ -152,6 +135,23 @@ async def predict_batch(count: int = 20):
         "failed": failed,
         "results": [r.model_dump() for r in results],
     }
+
+
+@app.post("/predict/{deal_pk}", response_model=PredictionResult)
+async def predict_deal(deal_pk: int):
+    """Run timing prediction for a single deal."""
+    if not pool:
+        raise HTTPException(503, "Not initialized")
+
+    try:
+        report, elapsed = await _run_pipeline(deal_pk)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.error(f"Prediction failed for {deal_pk}: {e}")
+        raise HTTPException(500, f"Prediction failed: {e}")
+
+    return _report_to_result(report, elapsed)
 
 
 @app.get("/results/{deal_pk}")
