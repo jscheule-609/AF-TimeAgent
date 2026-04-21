@@ -57,10 +57,16 @@ CREATE INDEX IF NOT EXISTS idx_timing_predictions_date ON timing_predictions(pre
 
 
 async def store_prediction(prediction: dict) -> str:
-    """Store a new prediction record. Returns prediction_id."""
+    """Store a new prediction record. Returns prediction_id.
+
+    On conflict (deal_pk already has a row), keeps the existing prediction_id
+    stable — downstream `update_prediction_actuals` looks up by prediction_id,
+    so overwriting it on re-predict would strand any external references.
+    Returns the actual prediction_id from the DB via RETURNING.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        row = await conn.fetchrow(
             """
             INSERT INTO timing_predictions (
                 prediction_id, deal_pk, acquirer_ticker, target_ticker,
@@ -77,6 +83,26 @@ async def store_prediction(prediction: dict) -> str:
                 $13, $14, $15, $16, $17::jsonb,
                 $18::jsonb, $19
             )
+            ON CONFLICT (deal_pk) DO UPDATE SET
+                acquirer_ticker         = EXCLUDED.acquirer_ticker,
+                target_ticker           = EXCLUDED.target_ticker,
+                prediction_date         = EXCLUDED.prediction_date,
+                p50_close_date          = EXCLUDED.p50_close_date,
+                p75_close_date          = EXCLUDED.p75_close_date,
+                p90_close_date          = EXCLUDED.p90_close_date,
+                predicted_critical_path = EXCLUDED.predicted_critical_path,
+                predicted_scenarios     = EXCLUDED.predicted_scenarios,
+                predicted_milestones    = EXCLUDED.predicted_milestones,
+                predicted_risk_flags    = EXCLUDED.predicted_risk_flags,
+                overlap_type            = EXCLUDED.overlap_type,
+                overlap_severity        = EXCLUDED.overlap_severity,
+                enforcement_regime      = EXCLUDED.enforcement_regime,
+                comparable_deals_used   = EXCLUDED.comparable_deals_used,
+                jurisdictions_modeled   = EXCLUDED.jurisdictions_modeled,
+                guidance_reconciliation = EXCLUDED.guidance_reconciliation,
+                model_version           = EXCLUDED.model_version,
+                updated_at              = NOW()
+            RETURNING prediction_id
             """,
             prediction["prediction_id"],
             prediction.get("deal_pk"),
@@ -113,7 +139,7 @@ async def store_prediction(prediction: dict) -> str:
             ) if prediction.get("guidance_reconciliation") else None,
             prediction.get("model_version", "0.1.0"),
         )
-        return prediction["prediction_id"]
+        return row["prediction_id"]
 
 
 async def get_prediction(prediction_id: str) -> Optional[dict]:
