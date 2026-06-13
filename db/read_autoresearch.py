@@ -70,18 +70,16 @@ async def load_deal_params_from_mars(
                 d.deal_structure_type,
                 d.date_announced, d.date_expected_close_parsed,
                 d.industry, d.gics_sector, d.deal_attitude,
-                pa.ticker  AS acquirer_ticker,
-                pa.company_name AS acquirer_name,
-                pt.ticker  AS target_ticker,
-                pt.company_name AS target_name,
+                pe_acq.ticker AS acquirer_ticker,
+                COALESCE(pe_acq.short_name, pe_acq.legal_name) AS acquirer_name,
+                pe_tgt.ticker AS target_ticker,
+                COALESCE(pe_tgt.short_name, pe_tgt.legal_name) AS target_name,
                 pe_acq.party_type AS acquirer_party_type,
                 pe_acq.domicile_country AS acquirer_country,
                 pe_tgt.domicile_country AS target_country
             FROM deals d
-            LEFT JOIN parties pa
-                ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
-            LEFT JOIN parties pt
-                ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
+            -- OQ-N20: v1 parties pa/pt removed; names/tickers now from the v2
+            -- deal_parties + party_entities joins already present below.
             LEFT JOIN deal_parties dp_acq
                 ON d.deal_pk = dp_acq.deal_pk
                 AND dp_acq.role_type = 'acquirer'
@@ -169,16 +167,32 @@ def _map_consideration(
 async def load_merger_terms_from_mars(
     deal_pk: int,
 ) -> Optional[ParsedMergerAgreement]:
-    """Load merger agreement data from deal_dma_terms + deal_break_fees +
-    deal_protections + deal_conditions.
+    """Load merger agreement data from v2 deal_outside_date_mechanics +
+    deal_break_fees + deal_protections + deal_conditions.
 
     Returns None if no deal_dma_terms row exists (autoresearch
     has not yet profiled this deal).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # OQ-N20: v1 deal_dma_terms -> v2 6-way split. The fields this loader uses
+        # (outside date + ticking fee) live in deal_outside_date_mechanics +
+        # deal_protections. "Not profiled" maps to "no outside-date-mechanics row".
+        # long_stop_extensions (v1 count) has no v2 equivalent — extended date is
+        # taken directly from odm.extended_outside_date instead.
         dma = await conn.fetchrow(
-            "SELECT * FROM deal_dma_terms WHERE deal_pk = $1",
+            """
+            SELECT
+                odm.outside_date AS long_stop_date,
+                odm.extended_outside_date AS extended_long_stop_date,
+                odm.extension_length_days,
+                odm.extension_available,
+                p.ticking_fee_present,
+                p.ticking_fee_details
+            FROM deal_outside_date_mechanics odm
+            LEFT JOIN deal_protections p ON p.deal_pk = odm.deal_pk
+            WHERE odm.deal_pk = $1
+            """,
             deal_pk,
         )
         if not dma:
@@ -293,9 +307,10 @@ async def load_press_release_data_from_mars(
                 d.date_announced,
                 d.date_expected_close,
                 d.date_expected_close_parsed,
-                dma.long_stop_date AS outside_date
+                dma.outside_date AS outside_date
             FROM deals d
-            LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
+            -- OQ-N20: v1 deal_dma_terms.long_stop_date -> v2 odm.outside_date
+            LEFT JOIN deal_outside_date_mechanics dma ON d.deal_pk = dma.deal_pk
             WHERE d.deal_pk = $1
             """,
             deal_pk,

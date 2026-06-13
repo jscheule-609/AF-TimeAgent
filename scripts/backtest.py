@@ -58,10 +58,11 @@ async def fetch_backtest_universe(
                 d.industry,
                 d.gics_sector
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk
-                AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk
-                AND pt.role = 'target'
+            -- OQ-N20: v1 parties -> v2 deal_parties (existence filter only)
+            JOIN deal_parties pa ON d.deal_pk = pa.deal_pk
+                AND pa.role_type = 'acquirer'
+            JOIN deal_parties pt ON d.deal_pk = pt.deal_pk
+                AND pt.role_type = 'target'
             WHERE d.deal_outcome = 'Closed'
               AND d.actual_completion_date IS NOT NULL
               AND d.timeline_days IS NOT NULL
@@ -304,10 +305,11 @@ async def run_single_deal(
                 d.industry,
                 d.gics_sector
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk
-                AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk
-                AND pt.role = 'target'
+            -- OQ-N20: v1 parties -> v2 deal_parties + party_entities (ticker match)
+            JOIN deal_parties dp_a ON d.deal_pk = dp_a.deal_pk AND dp_a.role_type = 'acquirer'
+            JOIN party_entities pa ON pa.party_id = dp_a.party_id
+            JOIN deal_parties dp_t ON d.deal_pk = dp_t.deal_pk AND dp_t.role_type = 'target'
+            JOIN party_entities pt ON pt.party_id = dp_t.party_id
             WHERE pa.ticker = $1 AND pt.ticker = $2
               AND d.deal_outcome = 'Closed'
               AND d.actual_completion_date IS NOT NULL
