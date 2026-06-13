@@ -32,7 +32,8 @@ LEFT JOIN regulatory_reviews rr_cfius
     AND rr_cfius.jurisdiction_code = 'CFIUS'
     AND rr_cfius.review_status != 'not_filed'
 LEFT JOIN deal_competitive_analysis dca ON d.deal_pk = dca.deal_pk
-LEFT JOIN deal_dma_terms dma ON d.deal_pk = dma.deal_pk
+-- OQ-N20: v1 deal_dma_terms.long_stop_date/extended -> v2 odm.outside_date/extended
+LEFT JOIN deal_outside_date_mechanics dma ON d.deal_pk = dma.deal_pk
 LEFT JOIN deal_protections dp ON d.deal_pk = dp.deal_pk
 """
 
@@ -79,8 +80,8 @@ _REGULATORY_COLUMNS = """
     dca.antitrust_risk_rating,
     dca.remedy_feasibility,
 
-    dma.long_stop_date                           AS outside_date,
-    dma.extended_long_stop_date                  AS extended_outside_date,
+    dma.outside_date                             AS outside_date,
+    dma.extended_outside_date                    AS extended_outside_date,
 
     dp.efforts_standard,
     (dp.divestiture_cap IS NOT NULL)             AS divestiture_commitment,
@@ -95,10 +96,10 @@ _BASE_DEAL_COLUMNS = """
     pe_tgt.domicile_country AS target_country,
     d.timeline_days, d.actual_completion_date,
     d.date_expected_close_parsed, d.deal_outcome,
-    pa.ticker as acquirer_ticker,
-    pa.company_name as acquirer_name,
-    pt.ticker as target_ticker,
-    pt.company_name as target_name,
+    pe_acq.ticker as acquirer_ticker,
+    COALESCE(pe_acq.short_name, pe_acq.legal_name) as acquirer_name,
+    pe_tgt.ticker as target_ticker,
+    COALESCE(pe_tgt.short_name, pe_tgt.legal_name) as target_name,
     pe_acq.party_type as acquirer_party_type
 """
 
@@ -124,10 +125,8 @@ async def find_deal_by_tickers(acquirer_ticker: str, target_ticker: str) -> Opti
             f"""
             SELECT {_BASE_DEAL_COLUMNS}
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_PARTY_ENTITY_JOINS}
-            WHERE pa.ticker = $1 AND pt.ticker = $2
+            WHERE pe_acq.ticker = $1 AND pe_tgt.ticker = $2
             ORDER BY d.date_announced DESC LIMIT 1
             """,
             acquirer_ticker, target_ticker,
@@ -143,11 +142,9 @@ async def get_acquirer_prior_deals(acquirer_name: str, limit: int = 15) -> list[
             f"""
             SELECT {_BASE_DEAL_COLUMNS}, {_REGULATORY_COLUMNS}
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
             {_PARTY_ENTITY_JOINS}
-            WHERE pa.company_name ILIKE '%' || $1 || '%'
+            WHERE COALESCE(pe_acq.short_name, pe_acq.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
             ORDER BY d.date_announced DESC
             LIMIT $2
@@ -172,15 +169,9 @@ async def get_target_prior_deals(
             f"""
             SELECT {_BASE_DEAL_COLUMNS}, {_REGULATORY_COLUMNS}
             FROM deals d
-            JOIN parties pa
-                ON d.deal_pk = pa.deal_pk
-                AND pa.role = 'acquirer'
-            JOIN parties pt
-                ON d.deal_pk = pt.deal_pk
-                AND pt.role = 'target'
             {_REGULATORY_JOINS}
             {_PARTY_ENTITY_JOINS}
-            WHERE pt.company_name ILIKE '%' || $1 || '%'
+            WHERE COALESCE(pe_tgt.short_name, pe_tgt.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
             ORDER BY d.date_announced DESC
             LIMIT $2
@@ -200,8 +191,6 @@ async def get_sector_comparable_deals(
             f"""
             SELECT {_BASE_DEAL_COLUMNS}, {_REGULATORY_COLUMNS}
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
             {_PARTY_ENTITY_JOINS}
             WHERE d.industry = $1
@@ -227,8 +216,6 @@ async def get_size_matched_deals(
             f"""
             SELECT {_BASE_DEAL_COLUMNS}, {_REGULATORY_COLUMNS}
             FROM deals d
-            JOIN parties pa ON d.deal_pk = pa.deal_pk AND pa.role = 'acquirer'
-            JOIN parties pt ON d.deal_pk = pt.deal_pk AND pt.role = 'target'
             {_REGULATORY_JOINS}
             {_PARTY_ENTITY_JOINS}
             WHERE d.deal_value_usd BETWEEN $1 AND $2

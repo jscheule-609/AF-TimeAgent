@@ -24,8 +24,10 @@ async def main():
                    CAST(d.deal_value_usd AS FLOAT) val,
                    d.closing_guidance_arbjournal aj
             FROM deals d
-            LEFT JOIN parties pt ON d.deal_pk = pt.deal_pk
-                AND pt.role = 'target'
+            -- OQ-N20: v1 parties -> v2 deal_parties + party_entities
+            LEFT JOIN deal_parties dp_t ON d.deal_pk = dp_t.deal_pk
+                AND dp_t.role_type = 'target'
+            LEFT JOIN party_entities pt ON pt.party_id = dp_t.party_id
             WHERE d.deal_status = 'Active'
               AND pt.ticker IS NOT NULL AND pt.ticker != ''
               AND d.deal_pk NOT IN (
