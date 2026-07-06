@@ -12,8 +12,7 @@ v2 migration (2026-04-12):
   - deal_dma_terms unchanged (still exists in v2)
 """
 import logging
-from datetime import date
-from dateutil.relativedelta import relativedelta
+from datetime import date, timedelta
 from typing import Optional
 
 from db.connection import get_pool
@@ -170,32 +169,40 @@ async def load_merger_terms_from_mars(
     """Load merger agreement data from v2 deal_outside_date_mechanics +
     deal_break_fees + deal_protections + deal_conditions.
 
-    Returns None if no deal_dma_terms row exists (autoresearch
-    has not yet profiled this deal).
+    Returns None if the deal has neither an outside-date-mechanics row nor a
+    deal_protections row (autoresearch has not yet profiled this deal).
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # OQ-N20: v1 deal_dma_terms -> v2 6-way split. The fields this loader uses
-        # (outside date + ticking fee) live in deal_outside_date_mechanics +
-        # deal_protections. "Not profiled" maps to "no outside-date-mechanics row".
-        # long_stop_extensions (v1 count) has no v2 equivalent — extended date is
-        # taken directly from odm.extended_outside_date instead.
+        # OQ-N20: v1 deal_dma_terms -> v2 6-way split. The fields this loader
+        # uses (outside date + ticking fee) live in deal_outside_date_mechanics
+        # + deal_protections. Anchored on deals (OQ-N20 review fix) so a deal
+        # with protections-era data but no odm row still gets a partial
+        # profile; "not profiled" = neither table has a row.
+        # long_stop_extensions (v1 count) has no v2 equivalent — the extended
+        # date comes from odm.extended_outside_date, or is synthesized from
+        # extension_available + extension_length_days.
         dma = await conn.fetchrow(
             """
             SELECT
+                odm.deal_pk AS _odm_present,
+                p.deal_pk AS _prot_present,
                 odm.outside_date AS long_stop_date,
                 odm.extended_outside_date AS extended_long_stop_date,
                 odm.extension_length_days,
                 odm.extension_available,
                 p.ticking_fee_present,
                 p.ticking_fee_details
-            FROM deal_outside_date_mechanics odm
-            LEFT JOIN deal_protections p ON p.deal_pk = odm.deal_pk
-            WHERE odm.deal_pk = $1
+            FROM deals d
+            LEFT JOIN deal_outside_date_mechanics odm ON odm.deal_pk = d.deal_pk
+            LEFT JOIN deal_protections p ON p.deal_pk = d.deal_pk
+            WHERE d.deal_pk = $1
             """,
             deal_pk,
         )
-        if not dma:
+        if not dma or (
+            dma["_odm_present"] is None and dma["_prot_present"] is None
+        ):
             return None
 
         # v2: break_fees → deal_break_fees
@@ -234,20 +241,31 @@ async def load_merger_terms_from_mars(
         elif "acquirer_to_target" in direction or "reverse" in direction:
             reverse_fee = amount
 
-    # Parse outside date from deal_dma_terms
+    # Parse outside date from the v2 outside-date mechanics (OQ-N20 review
+    # fix: the v1 long_stop_extensions count no longer exists — synthesize
+    # the extension description/extended date from the v2 columns instead).
     outside_date = dma["long_stop_date"]
     extended_outside_date = dma.get("extended_long_stop_date")
-    extensions = dma.get("long_stop_extensions") or 0
+    extension_days = dma.get("extension_length_days")
+    extension_available = bool(
+        dma.get("extension_available") or extended_outside_date
+    )
     extension_desc = []
-    if outside_date and extensions > 0:
-        if not extended_outside_date:
+    if outside_date and extension_available:
+        if not extended_outside_date and extension_days:
             extended_outside_date = (
-                outside_date
-                + relativedelta(months=extensions)
+                outside_date + timedelta(days=extension_days)
             )
-        extension_desc = [
-            f"{extensions}-month extension available"
-        ]
+        if extension_days:
+            extension_desc = [
+                f"{extension_days}-day extension available"
+            ]
+        elif extended_outside_date:
+            extension_desc = [
+                f"extension available to {extended_outside_date.isoformat()}"
+            ]
+        else:
+            extension_desc = ["extension available"]
 
     # Parse regulatory efforts from deal_protections + deal_conditions
     efforts_standard = "unknown"
