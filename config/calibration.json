@@ -66,9 +66,9 @@
     },
     "phase1_durations": {
       "name": "ec_phase1_days_from_filing",
-      "p50": 44.0,
-      "p75": 79.0,
-      "p90": 162.0
+      "p50": 43.5,
+      "p75": 79.75,
+      "p90": 163.70000000000016
     },
     "phase2_durations": {
       "name": "ec_phase2_days_from_phase2_open",
@@ -106,45 +106,45 @@
   },
   "guidance": {
     "residual_quantiles": {
-      "p10": -115.0,
-      "p25": -41.0,
+      "p10": -121.0,
+      "p25": -45.0,
       "p50": 0.0,
-      "p75": 19.0,
-      "p90": 95.0
+      "p75": 22.8,
+      "p90": 101.0
     },
-    "n": 1928,
-    "mean": -7.6,
-    "mae": 51.1
+    "n": 2170,
+    "mean": -8.1,
+    "mae": 54.6
   },
   "aft_model": {
     "coefficients": {
       "cross_border": 0.0,
-      "hostile_flag": -0.43614,
-      "intercept": 4.23911,
-      "log_value": 0.09144,
-      "sector:Communication Services": 0.4665,
-      "sector:Consumer Discretionary": 0.34298,
-      "sector:Consumer Staples": 0.29261,
-      "sector:Energy": 0.20649,
-      "sector:Financials": 0.61526,
-      "sector:Health Care": 0.14079,
-      "sector:Industrials": 0.31652,
-      "sector:Information Technology": 0.20283,
-      "sector:Materials": 0.23372,
-      "sector:Real Estate": 0.32742,
-      "sector:Utilities": 1.09399,
-      "stock_flag": 0.32301
+      "hostile_flag": -0.43728,
+      "intercept": 4.24157,
+      "log_value": 0.09157,
+      "sector:Communication Services": 0.47303,
+      "sector:Consumer Discretionary": 0.34579,
+      "sector:Consumer Staples": 0.3048,
+      "sector:Energy": 0.19976,
+      "sector:Financials": 0.61578,
+      "sector:Health Care": 0.13203,
+      "sector:Industrials": 0.31744,
+      "sector:Information Technology": 0.20794,
+      "sector:Materials": 0.24011,
+      "sector:Real Estate": 0.32272,
+      "sector:Utilities": 1.08217,
+      "stock_flag": 0.31894
     },
     "residual_quantiles": {
-      "p10": -0.6866,
-      "p25": -0.3738,
-      "p50": -0.0247,
-      "p75": 0.3367,
-      "p90": 0.7185
+      "p10": -0.687,
+      "p25": -0.372,
+      "p50": -0.024,
+      "p75": 0.3338,
+      "p90": 0.7151
     },
-    "residual_sigma": 0.5589,
-    "n": 6046,
-    "train_cutoff": "2024-07-01",
+    "residual_sigma": 0.5571,
+    "n": 6308,
+    "train_cutoff": null,
     "fit_date": "2026-07-13"
   },
   "track_weights": {
