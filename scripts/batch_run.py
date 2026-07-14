@@ -1,4 +1,10 @@
-"""Batch run timing agent on active deals, write results to stdout."""
+"""Batch run timing agent on active deals, write results to stdout.
+
+Re-predicts ALL Active+Pending deals on every run (upsert keeps one
+row per deal_pk) so estimates tighten as milestones are observed.
+Deals whose status has flipped are excluded — the April-2026 batch
+predicted 28 deals that had already closed.
+"""
 import asyncio
 import sys
 import json
@@ -29,11 +35,8 @@ async def main():
                 AND dp_t.role_type = 'target'
             LEFT JOIN party_entities pt ON pt.party_id = dp_t.party_id
             WHERE d.deal_status = 'Active'
+              AND d.deal_outcome = 'Pending'
               AND pt.ticker IS NOT NULL AND pt.ticker != ''
-              AND d.deal_pk NOT IN (
-                  SELECT deal_pk FROM timing_predictions
-                  WHERE deal_pk IS NOT NULL
-              )
             ORDER BY d.deal_value_usd DESC NULLS LAST
         """)
 

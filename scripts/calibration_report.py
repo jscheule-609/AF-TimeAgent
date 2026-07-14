@@ -119,6 +119,10 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
             WHERE d.deal_outcome = 'Closed'
               AND rr.filing_date IS NOT NULL
               AND rr.clearance_date IS NOT NULL
+              -- data-quality guard: ~6% of rows have clearance
+              -- before filing (loader artifact); cap at 720d
+              AND rr.clearance_date >= rr.filing_date
+              AND (rr.clearance_date - rr.filing_date) <= 720
         ) sub
     """
     duration_row = await _fetch_rows(pool, duration_sql)
@@ -176,6 +180,8 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
           AND rr.filing_date IS NOT NULL
           AND rr.clearance_date IS NOT NULL
           AND rr.phase_2_start_date IS NULL
+          AND rr.clearance_date >= rr.filing_date
+          AND (rr.clearance_date - rr.filing_date) <= 720
     """
     p1_rows = await _fetch_rows(pool, phase1_sql)
     p1 = p1_rows[0] if p1_rows else {}
@@ -196,6 +202,8 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
           AND rr.review_status != 'not_filed'
           AND rr.phase_2_start_date IS NOT NULL
           AND rr.clearance_date IS NOT NULL
+          AND rr.clearance_date >= rr.phase_2_start_date
+          AND (rr.clearance_date - rr.phase_2_start_date) <= 720
     """
     p2_rows = await _fetch_rows(pool, phase2_sql)
     p2 = p2_rows[0] if p2_rows else {}
@@ -256,6 +264,8 @@ async def compute_cma_stats(pool) -> Dict[str, Any]:
           AND rr.review_status != 'not_filed'
           AND rr.filing_date IS NOT NULL
           AND rr.clearance_date IS NOT NULL
+          AND rr.clearance_date >= rr.filing_date
+          AND (rr.clearance_date - rr.filing_date) <= 720
     """
     dur_rows = await _fetch_rows(pool, duration_sql)
     dur = dur_rows[0] if dur_rows else {}

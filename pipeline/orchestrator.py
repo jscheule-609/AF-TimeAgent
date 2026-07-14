@@ -182,8 +182,30 @@ async def run_timing_estimation(
             )
 
     # ═══════════════════════════════════════════════════════
+    # Stage 3d: Observed milestones for THIS deal (mid-deal
+    # re-prediction — realized dates collapse their components)
+    # ═══════════════════════════════════════════════════════
+    observed_milestones = None
+    if deal_params.mars_deal_pk:
+        try:
+            from db.queries_timeline_stats import (
+                get_deal_observed_milestones,
+            )
+            observed_milestones = await get_deal_observed_milestones(
+                deal_params.mars_deal_pk,
+            )
+            if observed_milestones:
+                logger.info(
+                    f"Observed milestones: "
+                    f"{ {k: str(v) for k, v in observed_milestones.items()} }"
+                )
+        except Exception as e:
+            logger.warning(f"Observed milestone load failed: {e}")
+
+    # ═══════════════════════════════════════════════════════
     # Stage 4: Timeline assembly + Prediction logging
     # ═══════════════════════════════════════════════════════
+    from datetime import date as _date
     try:
         report = await assemble_timeline(
             simulation, press_release_data,
@@ -191,6 +213,8 @@ async def run_timing_estimation(
             timeline_stats=timeline_stats,
             guidance_anchor=guidance_anchor,
             dma_close_gap=dma_close_gap,
+            as_of=_date.today(),
+            observed_milestones=observed_milestones,
         )
         report.overlap_type = overlap_assessment.overlap_type
         report.overlap_severity = overlap_assessment.overlap_severity

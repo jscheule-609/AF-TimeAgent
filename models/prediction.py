@@ -27,7 +27,7 @@ class PredictionRecord(BaseModel):
     actual_close_date: Optional[date] = None
     actual_timeline_days: Optional[int] = None
     actual_outcome: str = "pending"
-    model_version: str = "0.1.0"
+    model_version: str = "0.2.0"
 
 
 class CalibrationMetrics(BaseModel):

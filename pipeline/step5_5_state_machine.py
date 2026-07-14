@@ -117,11 +117,23 @@ async def simulate_regulatory_paths(
 
 
 def _aggregate_comparable_stats(groups: list[ComparableGroup]) -> dict:
-    """Aggregate jurisdiction-level stats across all comparable groups."""
+    """Aggregate jurisdiction-level stats across all comparable groups.
+
+    Defaults come from the observed corpus rates in calibration.json
+    (e.g. HSR second-request rate 0.15 vs the old hardcoded 0.095);
+    deal-specific comp-derived rates below still override them.
+    """
+    from config.calibration import get_rate
+
+    def _cal(section: str, fallback: float) -> float:
+        observed = get_rate(section)
+        # Guard: tiny-sample zero rates are not credible priors
+        return observed if observed else fallback
+
     stats = {
-        "second_request_rate": 0.095,
-        "ec_phase_2_rate": 0.03,
-        "cma_phase_2_rate": 0.05,
+        "second_request_rate": _cal("hsr", 0.095),
+        "ec_phase_2_rate": _cal("ec", 0.03),
+        "cma_phase_2_rate": _cal("cma", 0.05),
         "hsr_median_days_to_clear": 35,
     }
 

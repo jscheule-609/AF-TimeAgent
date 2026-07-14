@@ -70,6 +70,42 @@ async def get_milestone_intervals(
     ]
 
 
+async def get_deal_observed_milestones(
+    deal_pk: int,
+) -> dict:
+    """Realized milestone dates for ONE deal (mid-deal updates).
+
+    Returns {milestone_type: date} for the milestone types the
+    close-distribution conditions on.  First filing starts the
+    regulatory clock; the LAST clearance/vote governs closing,
+    hence min/max respectively.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT milestone_type,
+                   CASE WHEN milestone_type = 'antitrust_filing'
+                        THEN MIN(actual_date)
+                        ELSE MAX(actual_date)
+                   END AS actual_date
+            FROM deal_milestones
+            WHERE deal_pk = $1
+              AND actual_date IS NOT NULL
+              AND milestone_type IN (
+                  'antitrust_filing',
+                  'antitrust_clearance',
+                  'shareholder_vote'
+              )
+            GROUP BY milestone_type
+            """,
+            deal_pk,
+        )
+    return {
+        r["milestone_type"]: r["actual_date"] for r in rows
+    }
+
+
 async def get_global_baseline_intervals() -> list[dict]:
     """Return milestone intervals across ALL closed deals.
 

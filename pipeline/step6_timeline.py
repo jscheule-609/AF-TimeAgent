@@ -2,20 +2,29 @@
 Step 6: Timeline Assembly & Output
 
 Builds the milestone table, scenario paths, risk flags, and summary
-statistics.  Close-date predictions use the **two-track parallel
-model**: the regulatory track (state machine + empirical pre-filing)
-runs in parallel with the proxy/shareholder-vote track (fully
-empirical from comparable deals).  Close = max(regulatory, proxy,
-empirical total).
+statistics.  Close-date predictions come from the **Monte Carlo
+mixture model** (scoring.distribution): structural constraints
+(regulatory clearance, shareholder vote) combine by per-sample max,
+alternative estimators (mechanism chain, AFT/empirical corpus model,
+guidance + residuals) combine as a weighted mixture, and P50/P75/P90
+are read off the empirical quantiles of the final sample array.
+
+Supports mid-deal re-prediction: pass ``as_of`` and
+``observed_milestones`` to condition on elapsed time and realized
+milestone dates.  ``as_of=None`` means a day-0 prediction
+(backtest semantics — no conditioning, no today-floor).
 """
 import logging
 from datetime import date, timedelta
+from config.calibration import load_calibration
 from models.deal import DealParameters, DealStructure
 from models.documents import ParsedMergerAgreement, PressReleaseData
 from models.state_machine import FullSimulationResult
 from models.timeline import (
     MilestoneRow, ScenarioPath, RiskFlag, DealTimingReport,
 )
+from scoring.aft import predict_quantiles
+from scoring.distribution import build_close_distribution
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +46,22 @@ async def assemble_timeline(
     timeline_stats: dict | None = None,
     guidance_anchor: date | None = None,
     dma_close_gap: int = 3,
+    as_of: date | None = None,
+    observed_milestones: dict | None = None,
 ) -> DealTimingReport:
     """Assemble the final timeline report.
 
-    When *timeline_stats* is provided (from step3b), close-date
-    predictions use comparable-driven empirical durations.
-    *guidance_anchor* (from step2b) is used as a floor — the
-    model should not predict earlier than what the company/AJ
-    expects.
+    Close dates come from the Monte Carlo mixture over the
+    mechanism (regulatory ∧ vote), corpus (AFT / empirical
+    total), and guidance (anchor + residuals) tracks.
+
+    *as_of* is the prediction date: samples are conditioned on
+    the deal still being open, and no percentile may fall before
+    it.  ``None`` = day-0 prediction (backtests).
+    *observed_milestones* maps milestone_type → realized date for
+    THIS deal (antitrust_filing / antitrust_clearance /
+    shareholder_vote); realized components collapse to their
+    actual values.
     """
     announcement = deal_params.announcement_date
     ts = timeline_stats or {}
@@ -52,72 +69,70 @@ async def assemble_timeline(
         deal_params.deal_structure == DealStructure.TENDER
     )
 
-    # ── Compute close dates ──────────────────────────────
+    # ── Compute close dates (Monte Carlo mixture) ────────
 
-    if ts:
-        # Track 1: Regulatory (empirical pre-filing + review)
-        prefiling = _ts_val(ts, "announcement_to_filing", "p50")
-        review = _ts_val(ts, "filing_to_clearance", "p50")
-        reg_p50 = prefiling + review if (prefiling and review) else 0
+    cal = load_calibration()
 
-        prefiling75 = _ts_val(ts, "announcement_to_filing", "p75")
-        review75 = _ts_val(ts, "filing_to_clearance", "p75")
-        reg_p75 = prefiling75 + review75 if (prefiling75 and review75) else 0
+    guidance_days = None
+    if guidance_anchor and guidance_anchor > announcement:
+        guidance_days = float(
+            (guidance_anchor - announcement).days
+        )
 
-        prefiling90 = _ts_val(ts, "announcement_to_filing", "p90")
-        review90 = _ts_val(ts, "filing_to_clearance", "p90")
-        reg_p90 = prefiling90 + review90 if (prefiling90 and review90) else 0
+    observed_offsets = None
+    if observed_milestones:
+        observed_offsets = {
+            k: float((v - announcement).days)
+            for k, v in observed_milestones.items()
+            if v is not None and v > announcement
+        }
 
-        # Track 2: Proxy/shareholder vote (empirical)
-        vote_p50 = _ts_val(ts, "announcement_to_vote", "p50")
-        post_vote_p50 = _ts_val(ts, "vote_to_close", "p50")
-        proxy_p50 = vote_p50 + post_vote_p50 if (vote_p50 and post_vote_p50) else 0
+    elapsed_days = None
+    if as_of is not None and as_of > announcement:
+        elapsed_days = float((as_of - announcement).days)
 
-        vote_p75 = _ts_val(ts, "announcement_to_vote", "p75")
-        post_vote_p75 = _ts_val(ts, "vote_to_close", "p75")
-        proxy_p75 = vote_p75 + post_vote_p75 if (vote_p75 and post_vote_p75) else 0
+    aft_quantiles = None
+    try:
+        aft_quantiles = predict_quantiles(deal_params)
+    except Exception as e:
+        logger.warning(f"AFT quantiles failed: {e}")
 
-        vote_p90 = _ts_val(ts, "announcement_to_vote", "p90")
-        post_vote_p90 = _ts_val(ts, "vote_to_close", "p90")
-        proxy_p90 = vote_p90 + post_vote_p90 if (vote_p90 and post_vote_p90) else 0
+    dist = build_close_distribution(
+        simulation=simulation,
+        timeline_stats=ts or None,
+        aft_quantiles=aft_quantiles,
+        guidance_days=guidance_days,
+        guidance_residuals=(
+            (cal.get("guidance") or {}).get("residual_quantiles")
+        ),
+        is_tender=is_tender,
+        dma_close_gap=dma_close_gap,
+        weights=cal.get("track_weights"),
+        elapsed_days=elapsed_days,
+        observed=observed_offsets,
+        seed=(deal_params.mars_deal_pk or 42),
+    )
 
-        # Track 3: Empirical total (sanity floor)
-        total_p50 = _ts_val(ts, "announcement_to_close", "p50")
-        total_p75 = _ts_val(ts, "announcement_to_close", "p75")
-        total_p90 = _ts_val(ts, "announcement_to_close", "p90")
-
-        # State machine regulatory duration (existing model)
-        sm_p50 = simulation.critical_path_duration_p50 or 0
-        sm_p75 = simulation.critical_path_duration_p75 or 0
-        sm_p90 = simulation.critical_path_duration_p90 or 0
-
-        if is_tender:
-            # Tender offers: no proxy track
-            p50_days = max(reg_p50, sm_p50, total_p50)
-            p75_days = max(reg_p75, sm_p75, total_p75)
-            p90_days = max(reg_p90, sm_p90, total_p90)
-        else:
-            # Merger: max of all tracks
-            p50_days = max(reg_p50, proxy_p50, total_p50, sm_p50)
-            p75_days = max(reg_p75, proxy_p75, total_p75, sm_p75)
-            p90_days = max(reg_p90, proxy_p90, total_p90, sm_p90)
-
+    if dist:
+        p50_days = dist["p50"]
+        p75_days = dist["p75"]
+        p90_days = dist["p90"]
         logger.info(
-            f"Timeline calibration: reg_p50={reg_p50:.0f} "
-            f"proxy_p50={proxy_p50:.0f} "
-            f"total_p50={total_p50:.0f} "
-            f"sm_p50={sm_p50}"
+            f"Close distribution: p50={p50_days:.0f}d "
+            f"p75={p75_days:.0f}d p90={p90_days:.0f}d "
+            f"tracks={dist['tracks_used']} "
+            f"track_p50s={dist['track_p50s']} "
+            f"conditioned={dist['conditioned']}"
         )
     else:
         # Fallback: state-machine only (old behavior)
         p50_days = simulation.critical_path_duration_p50 or 0
         p75_days = simulation.critical_path_duration_p75 or 0
         p90_days = simulation.critical_path_duration_p90 or 0
-
-    # NOTE: guidance reconciliation happens in step8 —
-    # this step produces a pure model-driven estimate.
-    # step8 then compares to guidance and either adjusts
-    # specific components or flags discrepancies.
+        logger.warning(
+            "No distribution tracks available — falling back "
+            "to state-machine percentiles"
+        )
 
     p50_date = (
         announcement + timedelta(days=int(p50_days))
@@ -131,6 +146,17 @@ async def assemble_timeline(
         announcement + timedelta(days=int(p90_days))
         if p90_days else None
     )
+
+    # A prediction made today can never have a close date in
+    # the past (April-batch bug: P50s up to 407 days stale).
+    if as_of is not None:
+        floor = as_of + timedelta(days=1)
+        if p50_date and p50_date < floor:
+            p50_date = floor
+        if p75_date and p75_date < floor:
+            p75_date = floor
+        if p90_date and p90_date < floor:
+            p90_date = floor
 
     # ── Milestones ───────────────────────────────────────
 
