@@ -249,20 +249,8 @@ async def get_regulatory_milestones(deal_pk: int) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-async def get_proxy_timeline_comparables(industry: str) -> list[dict]:
-    """Get proxy/S-4 timeline data from comparable deals (v2: deal_timeline_actuals)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT dta.*, d.timeline_days, d.date_announced, d.actual_completion_date
-            FROM deal_timeline_actuals dta
-            JOIN deals d ON dta.deal_pk = d.deal_pk
-            WHERE d.industry = $1
-              AND d.deal_outcome = 'Closed'
-              AND d.date_announced >= NOW() - INTERVAL '3 years'
-            ORDER BY d.date_announced DESC
-            """,
-            industry,
-        )
-        return [dict(r) for r in rows]
+# get_proxy_timeline_comparables() removed 2026-09-12: it read
+# deal_timeline_actuals, which AF-AJ migration 021 dropped (never populated),
+# and had no callers. Comparable timeline data lives in deal_milestones;
+# see get_comparable_regulatory_events() for the v2 pattern.
+
