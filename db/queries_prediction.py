@@ -12,48 +12,10 @@ def _json_serial(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
-CREATE_PREDICTIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS timing_predictions (
-    prediction_id TEXT PRIMARY KEY,
-    deal_pk BIGINT REFERENCES deals(deal_pk),
-    acquirer_ticker TEXT NOT NULL,
-    target_ticker TEXT NOT NULL,
-    prediction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Predicted outcomes
-    p50_close_date DATE,
-    p75_close_date DATE,
-    p90_close_date DATE,
-    predicted_critical_path TEXT,
-    predicted_scenarios JSONB,
-    predicted_milestones JSONB,
-    predicted_risk_flags JSONB,
-    -- Model inputs
-    overlap_type TEXT,
-    overlap_severity TEXT,
-    enforcement_regime TEXT,
-    comparable_deals_used INTEGER,
-    jurisdictions_modeled JSONB,
-    -- Actuals (filled in when deal closes)
-    actual_close_date DATE,
-    actual_timeline_days INTEGER,
-    actual_critical_path TEXT,
-    actual_outcome TEXT DEFAULT 'pending',
-    -- Calibration metrics (filled in post-close)
-    p50_error_days INTEGER,
-    p75_error_days INTEGER,
-    p90_error_days INTEGER,
-    close_within_p50 BOOLEAN,
-    close_within_p75 BOOLEAN,
-    close_within_p90 BOOLEAN,
-    -- Metadata
-    model_version TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+# CREATE_PREDICTIONS_TABLE removed 2026-09-12: it was never invoked, omitted
+# guidance_reconciliation and the UNIQUE (deal_pk) that store_prediction()
+# relies on. MARS DDL is authored in AF-AJ/migrations/mars/ (one tracker).
 
-CREATE INDEX IF NOT EXISTS idx_timing_predictions_deal ON timing_predictions(deal_pk);
-CREATE INDEX IF NOT EXISTS idx_timing_predictions_date ON timing_predictions(prediction_date);
-"""
 
 
 async def store_prediction(prediction: dict) -> str:
