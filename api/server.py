@@ -90,8 +90,17 @@ class PredictionResult(BaseModel):
     p75_date: str | None
     p90_date: str | None
     critical_path: str | None
+    # engine version written to timing_predictions.model_version, and the
+    # row's prediction_id — what a caller (the MCP trigger tool) cites.
+    model_version: str | None = None
+    prediction_id: str | None = None
+    guidance_flag: str | None = None
     scenarios: list[dict] | None = None
-    risk_flags: list[str] | None = None
+    # DealTimingReport.risk_flags are RiskFlag objects
+    # (flag/severity/jurisdiction/detail); serialised as dicts. list[str]
+    # here made every report with >=1 flag fail validation -> HTTP 500
+    # after the row was already written.
+    risk_flags: list[dict] | None = None
     elapsed_seconds: float | None = None
 
 
@@ -101,6 +110,9 @@ class HealthResponse(BaseModel):
     listener_active: bool
     # False = paused on purpose (AGENT_LISTEN_ENABLED=0), distinct from broken.
     listener_enabled: bool = True
+    # False = TIMEAGENT_LLM_ENABLED=0 or no OpenRouter key: the LLM-backed
+    # steps are skipped and predictions run on MARS data + comparables.
+    llm_enabled: bool = True
 
 
 # ── Endpoints ─────────────────────────────────────────────
@@ -131,7 +143,7 @@ async def predict_batch(count: int = 20):
                 row["deal_pk"]
             )
             results.append(
-                _report_to_result(report, elapsed)
+                _report_to_result(report, elapsed, row["deal_pk"])
             )
         except Exception as e:
             logger.error(
@@ -160,7 +172,7 @@ async def predict_deal(deal_pk: int):
         logger.error(f"Prediction failed for {deal_pk}: {e}")
         raise HTTPException(500, f"Prediction failed: {e}")
 
-    return _report_to_result(report, elapsed)
+    return _report_to_result(report, elapsed, deal_pk)
 
 
 @app.get("/results/{deal_pk}")
@@ -262,11 +274,14 @@ async def health():
     except Exception:
         total = 0
 
+    from parsers.llm_extraction import llm_available
+
     return HealthResponse(
         status="healthy",
         predictions_total=total,
         listener_active=_listener_active,
         listener_enabled=_listen_enabled(),
+        llm_enabled=llm_available(),
     )
 
 
@@ -300,31 +315,33 @@ async def _run_pipeline(deal_pk: int):
     return report, elapsed
 
 
-def _report_to_result(report, elapsed) -> PredictionResult:
+def _report_to_result(report, elapsed, deal_pk: int) -> PredictionResult:
     """Convert DealTimingReport to API response."""
+    from models.prediction import PredictionRecord
+
+    def _iso(d):
+        return str(d) if d else None
+
+    gr = getattr(report, "guidance_reconciliation", None)
+    flags = []
+    for f in getattr(report, "risk_flags", None) or []:
+        if hasattr(f, "model_dump"):
+            flags.append(f.model_dump())
+        else:
+            flags.append({"flag": str(f)})
+
     return PredictionResult(
-        deal_pk=report.deal_pk if hasattr(report, 'deal_pk') else 0,
-        target=getattr(report, 'target_name', ''),
-        acquirer=getattr(report, 'acquirer_name', ''),
-        p50_date=(
-            str(report.p50_close_date)
-            if hasattr(report, 'p50_close_date')
-            and report.p50_close_date else None
-        ),
-        p75_date=(
-            str(report.p75_close_date)
-            if hasattr(report, 'p75_close_date')
-            and report.p75_close_date else None
-        ),
-        p90_date=(
-            str(report.p90_close_date)
-            if hasattr(report, 'p90_close_date')
-            and report.p90_close_date else None
-        ),
-        critical_path=(
-            getattr(report, 'critical_path_jurisdiction', None)
-        ),
-        risk_flags=getattr(report, 'risk_flags', None),
+        deal_pk=deal_pk,
+        target=getattr(report, "target", "") or "",
+        acquirer=getattr(report, "acquirer", "") or "",
+        p50_date=_iso(getattr(report, "p50_close_date", None)),
+        p75_date=_iso(getattr(report, "p75_close_date", None)),
+        p90_date=_iso(getattr(report, "p90_close_date", None)),
+        critical_path=getattr(report, "critical_path_jurisdiction", None),
+        model_version=PredictionRecord.model_fields["model_version"].default,
+        prediction_id=getattr(report, "prediction_id", None),
+        guidance_flag=getattr(gr, "flag", None) if gr else None,
+        risk_flags=flags,
         elapsed_seconds=round(elapsed, 1),
     )
 

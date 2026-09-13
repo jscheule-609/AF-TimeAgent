@@ -1,8 +1,27 @@
 """LLM-based extraction helpers via OpenRouter."""
 import json
+import logging
 import re
 import httpx
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class LLMDisabled(RuntimeError):
+    """Raised by call_llm when the LLM leg is off or has no key.
+
+    Every call site already catches Exception and degrades, so this only
+    changes *when* the failure happens: before any prompt is built or
+    document downloaded, not after a 403 from OpenRouter.
+    """
+
+
+def llm_available() -> bool:
+    """True when TIMEAGENT_LLM_ENABLED is on and an OpenRouter key is set."""
+    from config.settings import Settings
+    settings = Settings()
+    return bool(settings.timeagent_llm_enabled and settings.openrouter_api_key)
 
 
 async def call_llm(
@@ -17,6 +36,10 @@ async def call_llm(
 
     model = model or settings.extraction_model
     api_key = api_key or settings.openrouter_api_key
+    if not settings.timeagent_llm_enabled:
+        raise LLMDisabled("LLM step skipped: TIMEAGENT_LLM_ENABLED=0")
+    if not api_key:
+        raise LLMDisabled("LLM step skipped: OPENROUTER_API_KEY is not set")
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(

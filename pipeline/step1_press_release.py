@@ -7,6 +7,7 @@ import logging
 from datetime import timedelta
 from models.deal import DealParameters
 from models.documents import PressReleaseData
+from parsers.llm_extraction import llm_available
 from parsers.press_release_parser import parse_press_release
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,14 @@ async def parse_deal_press_release(
                 f"falling back to EDGAR: {e}"
             )
 
-    # Fallback: fetch from EDGAR
+    # Fallback: fetch from EDGAR (parse_press_release is LLM-only)
+    if not llm_available():
+        logger.info(
+            "Press release EDGAR fallback skipped: LLM disabled or no key"
+        )
+        return PressReleaseData(
+            announcement_date=deal_params.announcement_date
+        )
     try:
         from sec_api_tools import EdgarClient
         async with EdgarClient() as client:
