@@ -102,10 +102,67 @@ async def run_backtest_deal(
         deal_params, merger_agreement,
     )
 
+    # ── Stage 3b: Timeline calibration (production parity) ─
+    # Comp groups are already blinded to the test deal above;
+    # filter target history the same way.
+    timeline_stats = None
+    try:
+        from db.queries_comparables import get_target_prior_deals
+        from pipeline.step3b_timeline_calibration import (
+            calibrate_deal_timeline,
+        )
+        target_prior = await get_target_prior_deals(
+            deal_params.target_name,
+        )
+        target_prior = [
+            r for r in target_prior
+            if r.get("deal_pk") != exclude_deal_pk
+        ]
+        timeline_stats = await calibrate_deal_timeline(
+            comparable_groups, target_prior,
+        )
+    except Exception as e:
+        logger.warning(f"Timeline calibration failed: {e}")
+
+    # ── Stage 3c: Guidance anchor (production parity) ────
+    # Guidance was public on announcement day — reading it is
+    # NOT leakage; it is exactly what a live prediction sees.
+    guidance_anchor = None
+    dma_close_gap = 3
+    try:
+        from pipeline.step2b_guidance_anchor import (
+            load_guidance_anchor,
+            parse_dma_close_gap_days,
+        )
+        from db.connection import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            dma_row = await conn.fetchrow(
+                "SELECT closing_guidance_dma "
+                "FROM deals WHERE deal_pk = $1",
+                exclude_deal_pk,
+            )
+        if dma_row and dma_row["closing_guidance_dma"]:
+            dma_close_gap = parse_dma_close_gap_days(
+                dma_row["closing_guidance_dma"],
+            )
+        guidance_anchor = await load_guidance_anchor(
+            exclude_deal_pk,
+            deal_params.announcement_date,
+        )
+    except Exception as e:
+        logger.warning(f"Guidance anchor load failed: {e}")
+
     # ── Stage 4: Timeline assembly ───────────────────────
+    # as_of=None → day-0 prediction: no elapsed-time
+    # conditioning, no today-floor, no observed milestones.
     report = await assemble_timeline(
         simulation, press_release_data,
         merger_agreement, deal_params,
+        timeline_stats=timeline_stats,
+        guidance_anchor=guidance_anchor,
+        dma_close_gap=dma_close_gap,
+        as_of=None,
     )
     report.overlap_type = overlap_assessment.overlap_type
     report.overlap_severity = overlap_assessment.overlap_severity

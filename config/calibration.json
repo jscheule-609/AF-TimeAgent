@@ -2,45 +2,45 @@
   "hsr": {
     "rates": {
       "name": "hsr_second_request_rate",
-      "observed": 0.15368852459016394,
+      "observed": 0.09650529015710163,
       "model_base": 0.095
     },
     "rates_by_sector": [
       {
         "sector": "Communication Services",
-        "second_request_rate": 0.2679738562091503
+        "second_request_rate": 0.18502202643171806
       },
       {
         "sector": "Consumer Discretionary",
-        "second_request_rate": 0.15789473684210525
+        "second_request_rate": 0.11475409836065574
       },
       {
         "sector": "Consumer Staples",
-        "second_request_rate": 0.16417910447761194
+        "second_request_rate": 0.1164021164021164
       },
       {
         "sector": "Energy",
-        "second_request_rate": 0.15517241379310345
+        "second_request_rate": 0.10909090909090909
       },
       {
         "sector": "Financials",
-        "second_request_rate": 0.07407407407407407
+        "second_request_rate": 0.01763668430335097
       },
       {
         "sector": "Health Care",
-        "second_request_rate": 0.15178571428571427
+        "second_request_rate": 0.11447811447811448
       },
       {
         "sector": "Industrials",
-        "second_request_rate": 0.14849187935034802
+        "second_request_rate": 0.10865874363327674
       },
       {
         "sector": "Information Technology",
-        "second_request_rate": 0.1206896551724138
+        "second_request_rate": 0.0831353919239905
       },
       {
         "sector": "Materials",
-        "second_request_rate": 0.20253164556962025
+        "second_request_rate": 0.1322314049586777
       },
       {
         "sector": "Real Estate",
@@ -48,14 +48,14 @@
       },
       {
         "sector": "Utilities",
-        "second_request_rate": 0.18518518518518517
+        "second_request_rate": 0.1
       }
     ],
     "durations": {
       "name": "hsr_clearance_days_from_filing",
-      "p50": null,
-      "p75": null,
-      "p90": null
+      "p50": 30.0,
+      "p75": 31.0,
+      "p90": 52.60000000000002
     }
   },
   "ec": {
@@ -66,9 +66,9 @@
     },
     "phase1_durations": {
       "name": "ec_phase1_days_from_filing",
-      "p50": null,
-      "p75": null,
-      "p90": null
+      "p50": 43.5,
+      "p75": 79.75,
+      "p90": 163.70000000000016
     },
     "phase2_durations": {
       "name": "ec_phase2_days_from_phase2_open",
@@ -85,23 +85,71 @@
     },
     "durations": {
       "name": "cma_clearance_days_from_filing",
-      "p50": null,
-      "p75": null,
-      "p90": null
+      "p50": 92.0,
+      "p75": 92.0,
+      "p90": 92.0
     }
   },
   "samr": {
     "rates": {
       "name": "samr_applicable_rate",
-      "observed": 0.000286000286000286,
+      "observed": 0.00740529763600114,
       "model_base": null
     }
   },
   "cfius": {
     "rates": {
       "name": "cfius_review_rate",
-      "observed": 0.01773201773201773,
+      "observed": 0.032469381942466534,
       "model_base": null
     }
+  },
+  "guidance": {
+    "residual_quantiles": {
+      "p10": -121.0,
+      "p25": -45.0,
+      "p50": 0.0,
+      "p75": 22.8,
+      "p90": 101.0
+    },
+    "n": 2170,
+    "mean": -8.1,
+    "mae": 54.6
+  },
+  "aft_model": {
+    "coefficients": {
+      "cross_border": 0.0,
+      "hostile_flag": -0.43728,
+      "intercept": 4.24157,
+      "log_value": 0.09157,
+      "sector:Communication Services": 0.47303,
+      "sector:Consumer Discretionary": 0.34579,
+      "sector:Consumer Staples": 0.3048,
+      "sector:Energy": 0.19976,
+      "sector:Financials": 0.61578,
+      "sector:Health Care": 0.13203,
+      "sector:Industrials": 0.31744,
+      "sector:Information Technology": 0.20794,
+      "sector:Materials": 0.24011,
+      "sector:Real Estate": 0.32272,
+      "sector:Utilities": 1.08217,
+      "stock_flag": 0.31894
+    },
+    "residual_quantiles": {
+      "p10": -0.687,
+      "p25": -0.372,
+      "p50": -0.024,
+      "p75": 0.3338,
+      "p90": 0.7151
+    },
+    "residual_sigma": 0.5571,
+    "n": 6308,
+    "train_cutoff": null,
+    "fit_date": "2026-07-13"
+  },
+  "track_weights": {
+    "mechanism": 0.35,
+    "corpus": 0.25,
+    "guidance": 0.4
   }
 }

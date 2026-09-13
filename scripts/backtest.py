@@ -36,55 +36,91 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "backtest_results"
 
 
 async def fetch_backtest_universe(
-    lookback_years: int = 2, max_deals: int = 50,
+    lookback_years: int = 2,
+    max_deals: int = 50,
+    announced_after: date | None = None,
+    announced_before: date | None = None,
 ) -> list[dict]:
-    """Pull closed deals from MARS within the lookback window."""
+    """Pull closed deals from MARS within the lookback window.
+
+    ``announced_after``/``announced_before`` bound the test window
+    for time-split evaluation (fit AFT with --cutoff, test after).
+    """
     pool = await get_pool()
-    cutoff = date.today() - timedelta(days=lookback_years * 365)
+    start = announced_after or (
+        date.today() - timedelta(days=lookback_years * 365)
+    )
+    end = announced_before or date.today()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT
                 d.deal_pk,
                 pa.ticker  AS acquirer_ticker,
-                pa.company_name AS acquirer_name,
+                pa.legal_name AS acquirer_name,
                 pt.ticker  AS target_ticker,
-                pt.company_name AS target_name,
+                pt.legal_name AS target_name,
                 d.date_announced,
                 d.actual_completion_date,
                 d.timeline_days,
                 d.deal_value_usd,
                 d.deal_outcome,
                 d.industry,
-                d.gics_sector
+                d.gics_sector,
+                d.closing_guidance_arbjournal,
+                d.closing_guidance_companies
             FROM deals d
-            -- OQ-N20: v1 parties -> v2 deal_parties (existence filter only)
-            JOIN deal_parties pa ON d.deal_pk = pa.deal_pk
-                AND pa.role_type = 'acquirer'
-            JOIN deal_parties pt ON d.deal_pk = pt.deal_pk
-                AND pt.role_type = 'target'
+            -- OQ-N20: v1 parties -> v2 deal_parties + party_entities
+            JOIN deal_parties dp_a ON d.deal_pk = dp_a.deal_pk
+                AND dp_a.role_type = 'acquirer'
+            JOIN party_entities pa ON pa.party_id = dp_a.party_id
+            JOIN deal_parties dp_t ON d.deal_pk = dp_t.deal_pk
+                AND dp_t.role_type = 'target'
+            JOIN party_entities pt ON pt.party_id = dp_t.party_id
             WHERE d.deal_outcome = 'Closed'
               AND d.actual_completion_date IS NOT NULL
               AND d.timeline_days IS NOT NULL
               AND d.timeline_days > 30
               AND d.date_announced >= $1
+              AND d.date_announced < $2
               AND pa.ticker IS NOT NULL
               AND pt.ticker IS NOT NULL
             ORDER BY d.date_announced DESC
-            LIMIT $2
+            LIMIT $3
             """,
-            cutoff, max_deals,
+            start, end, max_deals,
         )
     return [dict(r) for r in rows]
+
+
+def _guidance_anchor_for_row(row: dict) -> date | None:
+    """Guidance midpoint for a universe row (baseline comparator).
+
+    Same parse + later-wins rule as step2b.load_guidance_anchor.
+    """
+    from pipeline.step2b_guidance_anchor import parse_guidance
+    ann = row["date_announced"]
+    anchors = []
+    for col in ("closing_guidance_arbjournal",
+                "closing_guidance_companies"):
+        lo, hi = parse_guidance(row.get(col), ann)
+        if lo and hi:
+            anchors.append(lo + (hi - lo) / 2)
+    return max(anchors) if anchors else None
 
 
 async def run_backtest(
     lookback_years: int = 2,
     max_deals: int = 50,
     save_results: bool = True,
+    announced_after: date | None = None,
+    announced_before: date | None = None,
 ):
     """Main backtest loop."""
-    universe = await fetch_backtest_universe(lookback_years, max_deals)
+    universe = await fetch_backtest_universe(
+        lookback_years, max_deals,
+        announced_after, announced_before,
+    )
     logger.info(f"Backtest universe: {len(universe)} closed deals "
                 f"(past {lookback_years} years)")
 
@@ -97,9 +133,14 @@ async def run_backtest(
         label = f"{row['acquirer_ticker']}/{row['target_ticker']}"
         logger.info(f"[{i}/{len(universe)}] {label}")
 
+        # deal_pk validation path: closed-deal targets are
+        # delisted, so SEC ticker resolution fails for most of
+        # the universe.  MARS enrichment is blinded again in
+        # run_backtest_deal after validation.
         deal_input = DealInput(
-            acquirer_ticker=row["acquirer_ticker"],
-            target_ticker=row["target_ticker"],
+            deal_pk=row["deal_pk"],
+            acquirer_ticker=row["acquirer_ticker"] or "",
+            target_ticker=row["target_ticker"] or "",
             deal_value_usd=row.get("deal_value_usd"),
             announcement_date=row.get("date_announced"),
         )
@@ -173,6 +214,14 @@ async def run_backtest(
                 "comparable_deals_used": report.comparable_deals_used,
                 "prediction_id": report.prediction_id,
             }
+
+            # Guidance-only baseline: the bar the model must beat
+            g_anchor = _guidance_anchor_for_row(row)
+            if g_anchor:
+                result["guidance_date"] = str(g_anchor)
+                result["guidance_error_days"] = (
+                    (actual_close - g_anchor).days
+                )
             results.append(result)
 
             # Persist actuals alongside the prediction
@@ -279,6 +328,29 @@ def _print_summary(results: list[dict]):
                   f"  MAE={np.mean(np.abs(s_errs)):.0f}d"
                   f"  bias={np.mean(s_errs):+.0f}d")
 
+    # Guidance-only baseline on the subset where guidance exists
+    guided = [
+        r for r in valid
+        if r.get("guidance_error_days") is not None
+        and r.get("p50_error_days") is not None
+    ]
+    if guided:
+        g_errs = [r["guidance_error_days"] for r in guided]
+        m_errs = [r["p50_error_days"] for r in guided]
+        beat = sum(
+            1 for r in guided
+            if abs(r["p50_error_days"])
+            < abs(r["guidance_error_days"])
+        )
+        print(f"\n GUIDANCE BASELINE ({len(guided)} deals "
+              f"with guidance):")
+        print(f"   guidance MAE: "
+              f"{np.mean(np.abs(g_errs)):.0f}d   "
+              f"model MAE: {np.mean(np.abs(m_errs)):.0f}d")
+        print(f"   model beats guidance on "
+              f"{beat}/{len(guided)} deals "
+              f"({beat/len(guided):.0%})")
+
     print(f"{'='*60}")
 
 
@@ -294,9 +366,9 @@ async def run_single_deal(
             SELECT
                 d.deal_pk,
                 pa.ticker  AS acquirer_ticker,
-                pa.company_name AS acquirer_name,
+                pa.legal_name AS acquirer_name,
                 pt.ticker  AS target_ticker,
-                pt.company_name AS target_name,
+                pt.legal_name AS target_name,
                 d.date_announced,
                 d.actual_completion_date,
                 d.timeline_days,
@@ -427,6 +499,15 @@ def main():
         help="Run one deal only, e.g. --single AVGO/VMW",
     )
     parser.add_argument(
+        "--start", type=str, default=None,
+        help="Only deals announced on/after YYYY-MM-DD "
+             "(time-split: pair with fit_model --cutoff)",
+    )
+    parser.add_argument(
+        "--end", type=str, default=None,
+        help="Only deals announced before YYYY-MM-DD",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable debug logging",
     )
@@ -447,7 +528,11 @@ def main():
             raise SystemExit(1)
         asyncio.run(_run_single(parts[0], parts[1]))
     else:
-        asyncio.run(_run(args.years, args.max_deals))
+        start = (
+            date.fromisoformat(args.start) if args.start else None
+        )
+        end = date.fromisoformat(args.end) if args.end else None
+        asyncio.run(_run(args.years, args.max_deals, start, end))
 
 
 async def _run_single(acquirer: str, target: str):
@@ -457,9 +542,17 @@ async def _run_single(acquirer: str, target: str):
         await close_pool()
 
 
-async def _run(years: int, max_deals: int):
+async def _run(
+    years: int,
+    max_deals: int,
+    start: date | None = None,
+    end: date | None = None,
+):
     try:
-        await run_backtest(lookback_years=years, max_deals=max_deals)
+        await run_backtest(
+            lookback_years=years, max_deals=max_deals,
+            announced_after=start, announced_before=end,
+        )
     finally:
         await close_pool()
 
