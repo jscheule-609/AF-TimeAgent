@@ -10,7 +10,10 @@ if [[ -f /root/af-deploy/secrets.env ]]; then
 fi
 
 : "${GITHUB_PAT:?GITHUB_PAT must be set (via /root/af-deploy/secrets.env or env)}"
-: "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY must be set}"
+# OPENROUTER_API_KEY is optional: with it empty (or TIMEAGENT_LLM_MODE=off)
+# parsers.llm_extraction.call_llm raises LLMDisabled before any HTTP and
+# every call site degrades (MARS data + comparables only).
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
 : "${SEC_USER_AGENT:?SEC_USER_AGENT must be set}"
 
 docker stop timeagent 2>/dev/null || true
