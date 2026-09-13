@@ -1,8 +1,11 @@
 """Prediction storage and retrieval queries."""
 import json
+import logging
 from datetime import date, datetime
 from typing import Optional
 from db.connection import get_pool
+
+logger = logging.getLogger(__name__)
 
 
 def _json_serial(obj):
@@ -125,7 +128,7 @@ async def update_prediction_actuals(
     """Update a prediction with actual results and compute error metrics."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        status = await conn.execute(
             """
             UPDATE timing_predictions SET
                 actual_close_date = $2,
@@ -147,6 +150,12 @@ async def update_prediction_actuals(
             actual_outcome,
             actual_critical_path,
         )
+        affected_rows = int(status.rsplit(" ", 1)[-1])
+        if affected_rows == 0:
+            logger.warning(
+                "No prediction matched actuals update: prediction_id=%s (UPDATE 0)",
+                prediction_id,
+            )
 
 
 async def get_calibration_data() -> list[dict]:
