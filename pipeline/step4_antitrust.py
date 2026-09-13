@@ -14,6 +14,55 @@ from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+# deal_competitive_analysis.product_market_overlap /
+# geographic_market_overlap vocabulary (varchar, MARS v2):
+#   NONE | LIMITED | MODERATE | SIGNIFICANT   (NULL = never assessed)
+_OVERLAP_LEVEL_TO_SEVERITY = {
+    "none": "none",
+    "limited": "low",
+    "moderate": "medium",
+    "significant": "high",
+}
+_SEVERITY_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def _clean(value) -> str:
+    return (value or "").strip().lower() if isinstance(value, str) else ""
+
+
+def mars_row_is_informative(mars: dict | None) -> bool:
+    """True when the MARS competitive-analysis row carries an actual
+    assessment: an antitrust_risk_rating, or a product/geographic overlap
+    flag (including an explicit NONE).
+
+    deal_competitive_analysis has a row for ~5,400 deals but only ~965 of
+    them were ever filled in; the rest are all-NULL placeholders.  A
+    placeholder must NOT short-circuit the 10-K + LLM fallback (it did
+    until 2026-09-13: ``if mars_analysis:`` is truthy for any dict).
+    """
+    if not mars:
+        return False
+    if _clean(mars.get("antitrust_risk_rating")) in ("high", "medium", "low"):
+        return True
+    return bool(
+        _clean(mars.get("product_market_overlap"))
+        or _clean(mars.get("geographic_market_overlap"))
+    )
+
+
+def _overlap_level_severity(mars: dict) -> str:
+    """Strongest of the two overlap flags mapped to a severity bucket."""
+    best = "none"
+    for col in ("product_market_overlap", "geographic_market_overlap"):
+        raw = _clean(mars.get(col))
+        if not raw:
+            continue
+        # Unknown non-empty vocabulary counts as a weak positive flag
+        sev = _OVERLAP_LEVEL_TO_SEVERITY.get(raw, "low")
+        if _SEVERITY_RANK[sev] > _SEVERITY_RANK[best]:
+            best = sev
+    return best
+
 
 async def assess_antitrust_overlap(
     tenk_acquirer: ParsedTenK | None,
@@ -47,8 +96,13 @@ async def assess_antitrust_overlap(
                 f"MARS competitive analysis lookup failed: {e}"
             )
 
-    if mars_analysis:
+    if mars_row_is_informative(mars_analysis):
         return _build_from_mars(mars_analysis)
+    if mars_analysis:
+        logger.info(
+            f"MARS competitive analysis row for deal_pk={mars_deal_pk} "
+            f"is a placeholder (no rating / overlap flag); using 10-K path"
+        )
 
     # Fall back to 10-K analysis + LLM
     if tenk_acquirer and tenk_target:
@@ -65,15 +119,15 @@ async def assess_antitrust_overlap(
 
 def _build_from_mars(mars: dict) -> OverlapAssessment:
     """Build OverlapAssessment from MARS v2 competitive analysis data."""
-    overlap_type = "none"
-    if mars.get("product_market_overlap"):
-        overlap_type = "horizontal"
-    elif mars.get("geographic_market_overlap"):
-        overlap_type = "horizontal"
+    # Overlap flags are a NONE/LIMITED/MODERATE/SIGNIFICANT vocabulary;
+    # the old truthiness test turned an explicit "NONE" into horizontal.
+    level_severity = _overlap_level_severity(mars)
+    overlap_type = "horizontal" if level_severity != "none" else "none"
 
     severity = "none"
-    # v2 provides antitrust_risk_rating directly
-    risk_rating = (mars.get("antitrust_risk_rating") or "").lower()
+    # v2 provides antitrust_risk_rating directly (NULL corpus-wide as of
+    # 2026-09; kept as the highest-precedence signal)
+    risk_rating = _clean(mars.get("antitrust_risk_rating"))
     share = mars.get("combined_market_share_pct")
 
     if risk_rating in ("high", "medium", "low"):
@@ -85,6 +139,10 @@ def _build_from_mars(mars: dict) -> OverlapAssessment:
             severity = "medium"
         elif share > 10:
             severity = "low"
+    else:
+        # No rating and no share estimate: the analyst's overlap level is
+        # the only severity signal (SIGNIFICANT overlap was "none" before).
+        severity = level_severity
 
     base_sr_prob = 0.03
     if severity == "high":
