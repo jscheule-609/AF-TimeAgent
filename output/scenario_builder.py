@@ -43,6 +43,8 @@ def build_joint_scenarios(
     # Per-jurisdiction extended scenarios
     for jur_sim in simulation.jurisdictions:
         for path in jur_sim.possible_paths:
+            if not path.states:  # not applicable belongs only in the joint clean case
+                continue
             if path.is_terminal_clear and path.path_probability > 0.05:
                 if "Phase 2" in path.path_label or "Second Request" in path.path_label or "Extended" in path.path_label:
                     scenarios.append(ScenarioPath(

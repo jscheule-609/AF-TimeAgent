@@ -289,6 +289,9 @@ def _build_milestones(
     latest_clear_p90 = 0
 
     for jur_sim in simulation.jurisdictions:
+        # Rare possibilities remain modeled, but are not dated filing obligations.
+        if jur_sim.applicability < 0.5:
+            continue
         # Use jurisdiction_label (actual name) not enum
         jur_label = (
             jur_sim.jurisdiction_label
@@ -501,6 +504,9 @@ def _build_scenarios(
     for jur_sim in simulation.jurisdictions:
         clean_path = None
         for p in jur_sim.possible_paths:
+            if p.is_terminal_clear and not p.states:
+                clean_path = p
+                break
             if p.is_terminal_clear and "Clean" in p.path_label:
                 clean_path = p
                 break
@@ -523,7 +529,7 @@ def _build_scenarios(
     # Scenario 2+: Extended reviews per jurisdiction
     for jur_sim in simulation.jurisdictions:
         for path in jur_sim.possible_paths:
-            if not path.is_terminal_clear:
+            if not path.is_terminal_clear or not path.states:
                 continue
             if "Phase 2" in path.path_label or "Second Request" in path.path_label:
                 scenarios.append(ScenarioPath(

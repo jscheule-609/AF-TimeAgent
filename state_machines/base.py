@@ -19,6 +19,16 @@ from datetime import date
 from typing import Optional
 
 
+def expected_path_durations(paths: list[PathOutcome]) -> tuple[int, int, int]:
+    """Probability-weighted path duration summaries, retaining integer days."""
+    total_prob = sum(p.path_probability for p in paths) or 1.0
+    return tuple(
+        int(sum(getattr(p, f"total_duration_days_{pct}") * p.path_probability
+                for p in paths) / total_prob)
+        for pct in ("p50", "p75", "p90")
+    )
+
+
 class BaseRegulatoryStateMachine(ABC):
 
     @abstractmethod
@@ -114,10 +124,7 @@ class BaseRegulatoryStateMachine(ABC):
         possible_paths.sort(key=lambda p: p.path_probability, reverse=True)
 
         # Compute expected durations (probability-weighted)
-        total_prob = sum(p.path_probability for p in possible_paths) or 1.0
-        exp_p50 = int(sum(p.total_duration_days_p50 * p.path_probability for p in possible_paths) / total_prob)
-        exp_p75 = int(sum(p.total_duration_days_p75 * p.path_probability for p in possible_paths) / total_prob)
-        exp_p90 = int(sum(p.total_duration_days_p90 * p.path_probability for p in possible_paths) / total_prob)
+        exp_p50, exp_p75, exp_p90 = expected_path_durations(possible_paths)
 
         filing_deadline = None
         if contractual_filing_deadline_days is not None:
