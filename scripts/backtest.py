@@ -40,11 +40,15 @@ async def fetch_backtest_universe(
     max_deals: int = 50,
     announced_after: date | None = None,
     announced_before: date | None = None,
+    deal_pks: list[int] | None = None,
 ) -> list[dict]:
     """Pull closed deals from MARS within the lookback window.
 
     ``announced_after``/``announced_before`` bound the test window
     for time-split evaluation (fit AFT with --cutoff, test after).
+    ``deal_pks`` pins the universe to an explicit set (e.g. the
+    deal_pks of an earlier results file) so two runs compare the same
+    deals even after the corpus has grown.
     """
     pool = await get_pool()
     start = announced_after or (
@@ -85,12 +89,22 @@ async def fetch_backtest_universe(
               AND d.date_announced < $2
               AND pa.ticker IS NOT NULL
               AND pt.ticker IS NOT NULL
+              AND ($4::bigint[] IS NULL OR d.deal_pk = ANY($4::bigint[]))
             ORDER BY d.date_announced DESC
             LIMIT $3
             """,
-            start, end, max_deals,
+            start, end, max_deals, deal_pks,
         )
     return [dict(r) for r in rows]
+
+
+def load_universe_pks(path: str) -> list[int]:
+    """deal_pks from an earlier backtest results JSON (or a comma list)."""
+    p = Path(path)
+    if p.exists():
+        data = json.loads(p.read_text())
+        return sorted({int(r["deal_pk"]) for r in data if r.get("deal_pk")})
+    return sorted({int(x) for x in path.split(",") if x.strip()})
 
 
 def _guidance_anchor_for_row(row: dict) -> date | None:
@@ -115,11 +129,14 @@ async def run_backtest(
     save_results: bool = True,
     announced_after: date | None = None,
     announced_before: date | None = None,
+    deal_pks: list[int] | None = None,
+    tag: str | None = None,
 ):
     """Main backtest loop."""
     universe = await fetch_backtest_universe(
         lookback_years, max_deals,
         announced_after, announced_before,
+        deal_pks=deal_pks,
     )
     logger.info(f"Backtest universe: {len(universe)} closed deals "
                 f"(past {lookback_years} years)")
@@ -249,7 +266,10 @@ async def run_backtest(
     # Save to disk
     if save_results:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        out_file = OUTPUT_DIR / f"backtest_{date.today().isoformat()}.json"
+        suffix = f"_{tag}" if tag else ""
+        out_file = OUTPUT_DIR / (
+            f"backtest_{date.today().isoformat()}{suffix}.json"
+        )
         with open(out_file, "w") as f:
             json.dump(results, f, indent=2, default=str)
         print(f"\nResults saved to {out_file}")
@@ -508,6 +528,16 @@ def main():
         help="Only deals announced before YYYY-MM-DD",
     )
     parser.add_argument(
+        "--universe", type=str, default=None,
+        metavar="RESULTS_JSON|PK,PK,...",
+        help="Pin the universe to the deal_pks of an earlier results "
+             "file (or a comma list) so runs compare the same deals",
+    )
+    parser.add_argument(
+        "--tag", type=str, default=None,
+        help="Suffix for the results file: backtest_<date>_<tag>.json",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable debug logging",
     )
@@ -532,7 +562,11 @@ def main():
             date.fromisoformat(args.start) if args.start else None
         )
         end = date.fromisoformat(args.end) if args.end else None
-        asyncio.run(_run(args.years, args.max_deals, start, end))
+        pks = load_universe_pks(args.universe) if args.universe else None
+        asyncio.run(_run(
+            args.years, args.max_deals, start, end,
+            deal_pks=pks, tag=args.tag,
+        ))
 
 
 async def _run_single(acquirer: str, target: str):
@@ -547,11 +581,14 @@ async def _run(
     max_deals: int,
     start: date | None = None,
     end: date | None = None,
+    deal_pks: list[int] | None = None,
+    tag: str | None = None,
 ):
     try:
         await run_backtest(
             lookback_years=years, max_deals=max_deals,
             announced_after=start, announced_before=end,
+            deal_pks=deal_pks, tag=tag,
         )
     finally:
         await close_pool()
