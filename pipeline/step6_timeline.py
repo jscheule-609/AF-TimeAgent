@@ -29,6 +29,24 @@ from scoring.distribution import build_close_distribution
 logger = logging.getLogger(__name__)
 
 
+def modeled_jurisdictions(
+    simulation: FullSimulationResult,
+) -> list[str]:
+    """Jurisdictions the state-machine step actually simulated.
+
+    Uses the mapped label (e.g. "STATE_PUC_CA") when present, else the
+    machine's enum value; order preserved, duplicates dropped.  This is
+    what timing_predictions.jurisdictions_modeled records (it was
+    hard-coded to [] before 2026-09-13).
+    """
+    out: list[str] = []
+    for jur in simulation.jurisdictions:
+        label = jur.jurisdiction_label or jur.jurisdiction.value
+        if label and label not in out:
+            out.append(label)
+    return out
+
+
 def _ts_val(
     timeline_stats: dict, interval: str, pct: str,
 ) -> float:
@@ -218,6 +236,7 @@ async def assemble_timeline(
         ),
         enforcement_regime="normal",
         comparable_deals_used=comp_count,
+        jurisdictions_modeled=modeled_jurisdictions(simulation),
         generated_at=date.today().isoformat(),
     )
 

@@ -76,6 +76,10 @@ class DealTimingReport(BaseModel):
     overlap_type: str = ""
     overlap_severity: str = ""
     comparable_deals_used: int = 0
+    # Jurisdictions actually simulated in step 5.5 (labels such as
+    # "HSR", "EC", "STATE_PUC_CA"); persisted to
+    # timing_predictions.jurisdictions_modeled by step 7.
+    jurisdictions_modeled: list[str] = []
     guidance_reconciliation: Optional[GuidanceReconciliation] = None
     prediction_id: Optional[str] = None
     generated_at: Optional[str] = None
