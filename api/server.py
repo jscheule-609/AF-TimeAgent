@@ -52,15 +52,22 @@ async def lifespan(app: FastAPI):
     # Set up environment for settings module
     _configure_env()
 
-    # Start NOTIFY listener
-    listener_task = asyncio.create_task(
-        _notify_listener(dsn)
-    )
+    # Start NOTIFY listener. AGENT_LISTEN_ENABLED=0 keeps the HTTP API and
+    # /health up but never subscribes — a clean pause. (TimeAgent installs no
+    # trigger; trg_new_deal is owned by AF-AJ migration 036.)
+    listener_task = None
+    if _listen_enabled():
+        listener_task = asyncio.create_task(_notify_listener(dsn))
+    else:
+        logger.warning(
+            "NOTIFY listener disabled by AGENT_LISTEN_ENABLED=0 — HTTP API only"
+        )
 
     logger.info("TimeAgent API ready")
     yield
 
-    listener_task.cancel()
+    if listener_task is not None:
+        listener_task.cancel()
     await pool.close()
     logger.info("Shutdown complete")
 
@@ -92,6 +99,8 @@ class HealthResponse(BaseModel):
     status: str
     predictions_total: int
     listener_active: bool
+    # False = paused on purpose (AGENT_LISTEN_ENABLED=0), distinct from broken.
+    listener_enabled: bool = True
 
 
 # ── Endpoints ─────────────────────────────────────────────
@@ -257,6 +266,7 @@ async def health():
         status="healthy",
         predictions_total=total,
         listener_active=_listener_active,
+        listener_enabled=_listen_enabled(),
     )
 
 
@@ -385,6 +395,13 @@ async def _auto_predict(deal_pk: int):
 
 
 # ── Config ────────────────────────────────────────────────
+
+def _listen_enabled() -> bool:
+    """AGENT_LISTEN_ENABLED=0 = pause the NOTIFY consumer, keep the API."""
+    return os.environ.get("AGENT_LISTEN_ENABLED", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
 
 def _build_dsn() -> str:
     host = os.environ.get("MARS_DB_HOST", "mars-db")
