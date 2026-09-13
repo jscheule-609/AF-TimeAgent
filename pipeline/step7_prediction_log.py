@@ -44,7 +44,13 @@ async def log_prediction(report: DealTimingReport, deal_pk: int | None = None) -
     )
 
     try:
-        await store_prediction(record.model_dump())
+        # On conflict (deal_pk already predicted) store_prediction keeps the
+        # existing prediction_id and RETURNs it.  Use that, not the fresh
+        # uuid: callers key on it (update_prediction_actuals in the
+        # backtest, the MCP trigger response), and a re-prediction that
+        # reported the unstored uuid matched zero rows downstream.
+        stored_id = await store_prediction(record.model_dump())
+        prediction_id = stored_id or prediction_id
         report.prediction_id = prediction_id
         logger.info(f"Prediction stored: {prediction_id}")
     except Exception as e:
