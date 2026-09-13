@@ -1,4 +1,4 @@
-"""API response shaping and the TIMEAGENT_LLM_ENABLED switch (no DB, no network)."""
+"""API response shaping and the TIMEAGENT_LLM_MODE switch (no DB, no network)."""
 from datetime import date
 
 import pytest
@@ -69,19 +69,22 @@ async def test_call_llm_short_circuits_when_disabled(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _no_network)
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    monkeypatch.setenv("TIMEAGENT_LLM_ENABLED", "0")
-    assert le.llm_available() is False
-    with pytest.raises(le.LLMDisabled, match="TIMEAGENT_LLM_ENABLED=0"):
+    monkeypatch.setenv("TIMEAGENT_LLM_MODE", "off")
+    assert le.llm_mode() == "off" and le.llm_available() is False
+    with pytest.raises(le.LLMDisabled, match="TIMEAGENT_LLM_MODE=off"):
         await le.call_llm("x")
 
-    monkeypatch.setenv("TIMEAGENT_LLM_ENABLED", "1")
+    monkeypatch.setenv("TIMEAGENT_LLM_MODE", "OpenRouter")  # case-insensitive
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
-    assert le.llm_available() is False
+    assert le.llm_mode() == "openrouter" and le.llm_available() is False
     with pytest.raises(le.LLMDisabled, match="OPENROUTER_API_KEY"):
         await le.call_llm("x")
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     assert le.llm_available() is True
+
+    monkeypatch.setenv("TIMEAGENT_LLM_MODE", "anthropic")  # unknown -> off
+    assert le.llm_mode() == "off" and le.llm_available() is False
 
 
 @pytest.mark.asyncio
@@ -93,7 +96,7 @@ async def test_ingestion_skips_edgar_when_llm_disabled(monkeypatch):
     from pipeline import step1_press_release as s1
     from pipeline import step2_document_ingestion as s2
 
-    monkeypatch.setenv("TIMEAGENT_LLM_ENABLED", "0")
+    monkeypatch.setenv("TIMEAGENT_LLM_MODE", "off")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     monkeypatch.setitem(sys.modules, "sec_api_tools", None)  # import -> ImportError
 

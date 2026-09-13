@@ -19,7 +19,7 @@ docker build -q --build-arg GITHUB_PAT="$GITHUB_PAT" -t af-timeagent .
 # --init reaps stray children; port bound to loopback (mars-net peers use
 # timeagent:8004; nothing off-box should reach it directly).
 # TIMEAGENT_LISTEN_ENABLED=0 in secrets.env pauses the NOTIFY consumer.
-# TIMEAGENT_LLM_ENABLED=0 skips the OpenRouter-backed steps (10-K parse,
+# TIMEAGENT_LLM_MODE=off skips the OpenRouter-backed steps (10-K parse,
 # EDGAR press-release/merger fallbacks) - set it while the key is unfunded.
 docker run -d --name timeagent --restart always --init --network mars-net \
   -p 127.0.0.1:8004:8004 \
@@ -28,5 +28,5 @@ docker run -d --name timeagent --restart always --init --network mars-net \
   -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -e SEC_USER_AGENT="$SEC_USER_AGENT" \
   -e AGENT_LISTEN_ENABLED="${TIMEAGENT_LISTEN_ENABLED:-1}" \
-  -e TIMEAGENT_LLM_ENABLED="${TIMEAGENT_LLM_ENABLED:-1}" \
+  -e TIMEAGENT_LLM_MODE="${TIMEAGENT_LLM_MODE:-openrouter}" \
   af-timeagent

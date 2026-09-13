@@ -52,6 +52,12 @@ async def lifespan(app: FastAPI):
     # Set up environment for settings module
     _configure_env()
 
+    # Logged once so the mode is visible in `docker logs` after a deploy.
+    from parsers.llm_extraction import llm_available, llm_mode
+    logger.info(
+        "TIMEAGENT_LLM_MODE=%s (llm_enabled=%s)", llm_mode(), llm_available()
+    )
+
     # Start NOTIFY listener. AGENT_LISTEN_ENABLED=0 keeps the HTTP API and
     # /health up but never subscribes — a clean pause. (TimeAgent installs no
     # trigger; trg_new_deal is owned by AF-AJ migration 036.)
@@ -110,8 +116,10 @@ class HealthResponse(BaseModel):
     listener_active: bool
     # False = paused on purpose (AGENT_LISTEN_ENABLED=0), distinct from broken.
     listener_enabled: bool = True
-    # False = TIMEAGENT_LLM_ENABLED=0 or no OpenRouter key: the LLM-backed
-    # steps are skipped and predictions run on MARS data + comparables.
+    # TIMEAGENT_LLM_MODE ("openrouter" | "off"); llm_enabled is False when
+    # the mode is off or no OpenRouter key is set: the LLM-backed steps are
+    # skipped and predictions run on MARS data + comparables.
+    llm_mode: str = "openrouter"
     llm_enabled: bool = True
 
 
@@ -274,13 +282,14 @@ async def health():
     except Exception:
         total = 0
 
-    from parsers.llm_extraction import llm_available
+    from parsers.llm_extraction import llm_available, llm_mode
 
     return HealthResponse(
         status="healthy",
         predictions_total=total,
         listener_active=_listener_active,
         listener_enabled=_listen_enabled(),
+        llm_mode=llm_mode(),
         llm_enabled=llm_available(),
     )
 

@@ -17,11 +17,32 @@ class LLMDisabled(RuntimeError):
     """
 
 
-def llm_available() -> bool:
-    """True when TIMEAGENT_LLM_ENABLED is on and an OpenRouter key is set."""
+_VALID_MODES = ("openrouter", "off")
+
+
+def llm_mode() -> str:
+    """Normalised TIMEAGENT_LLM_MODE: "openrouter" (default) or "off".
+    Anything else is treated as "off" (fail closed) and logged once."""
     from config.settings import Settings
-    settings = Settings()
-    return bool(settings.timeagent_llm_enabled and settings.openrouter_api_key)
+    mode = (Settings().timeagent_llm_mode or "openrouter").strip().lower()
+    if mode not in _VALID_MODES:
+        if mode not in _warned_modes:
+            _warned_modes.add(mode)
+            logger.warning(
+                "TIMEAGENT_LLM_MODE=%r is not one of %s — treating as 'off'",
+                mode, _VALID_MODES,
+            )
+        return "off"
+    return mode
+
+
+_warned_modes: set[str] = set()
+
+
+def llm_available() -> bool:
+    """True when TIMEAGENT_LLM_MODE=openrouter and an OpenRouter key is set."""
+    from config.settings import Settings
+    return llm_mode() == "openrouter" and bool(Settings().openrouter_api_key)
 
 
 async def call_llm(
@@ -36,8 +57,8 @@ async def call_llm(
 
     model = model or settings.extraction_model
     api_key = api_key or settings.openrouter_api_key
-    if not settings.timeagent_llm_enabled:
-        raise LLMDisabled("LLM step skipped: TIMEAGENT_LLM_ENABLED=0")
+    if llm_mode() == "off":
+        raise LLMDisabled("LLM step skipped: TIMEAGENT_LLM_MODE=off")
     if not api_key:
         raise LLMDisabled("LLM step skipped: OPENROUTER_API_KEY is not set")
 
