@@ -131,8 +131,9 @@ async def run_backtest(
     announced_before: date | None = None,
     deal_pks: list[int] | None = None,
     tag: str | None = None,
+    no_persist: bool = False,
 ):
-    """Main backtest loop."""
+    """Main backtest loop; no_persist disables prediction and actuals writes."""
     universe = await fetch_backtest_universe(
         lookback_years, max_deals,
         announced_after, announced_before,
@@ -166,6 +167,7 @@ async def run_backtest(
             report = await run_backtest_deal(
                 deal_input,
                 exclude_deal_pk=row["deal_pk"],
+                no_persist=no_persist,
             )
 
             actual_close = row["actual_completion_date"]
@@ -242,7 +244,7 @@ async def run_backtest(
             results.append(result)
 
             # Persist actuals alongside the prediction
-            if report.prediction_id:
+            if not no_persist and report.prediction_id:
                 try:
                     await update_prediction_actuals(
                         prediction_id=report.prediction_id,
@@ -377,6 +379,7 @@ def _print_summary(results: list[dict]):
 async def run_single_deal(
     acquirer_ticker: str,
     target_ticker: str,
+    no_persist: bool = False,
 ) -> dict | None:
     """Run backtest for one specific deal. Prints detailed output."""
     pool = await get_pool()
@@ -442,6 +445,7 @@ async def run_single_deal(
     report = await run_backtest_deal(
         deal_input,
         exclude_deal_pk=row["deal_pk"],
+        no_persist=no_persist,
     )
 
     actual_close = row["actual_completion_date"]
@@ -538,6 +542,10 @@ def main():
         help="Suffix for the results file: backtest_<date>_<tag>.json",
     )
     parser.add_argument(
+        "--no-persist", action="store_true",
+        help="Skip prediction logging and actuals updates (results JSON still saved)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable debug logging",
     )
@@ -556,7 +564,7 @@ def main():
             print("--single expects ACQ/TGT format, "
                   "e.g. --single AVGO/VMW")
             raise SystemExit(1)
-        asyncio.run(_run_single(parts[0], parts[1]))
+        asyncio.run(_run_single(parts[0], parts[1], no_persist=args.no_persist))
     else:
         start = (
             date.fromisoformat(args.start) if args.start else None
@@ -565,13 +573,13 @@ def main():
         pks = load_universe_pks(args.universe) if args.universe else None
         asyncio.run(_run(
             args.years, args.max_deals, start, end,
-            deal_pks=pks, tag=args.tag,
+            deal_pks=pks, tag=args.tag, no_persist=args.no_persist,
         ))
 
 
-async def _run_single(acquirer: str, target: str):
+async def _run_single(acquirer: str, target: str, no_persist: bool = False):
     try:
-        await run_single_deal(acquirer, target)
+        await run_single_deal(acquirer, target, no_persist=no_persist)
     finally:
         await close_pool()
 
@@ -583,12 +591,13 @@ async def _run(
     end: date | None = None,
     deal_pks: list[int] | None = None,
     tag: str | None = None,
+    no_persist: bool = False,
 ):
     try:
         await run_backtest(
             lookback_years=years, max_deals=max_deals,
             announced_after=start, announced_before=end,
-            deal_pks=deal_pks, tag=tag,
+            deal_pks=deal_pks, tag=tag, no_persist=no_persist,
         )
     finally:
         await close_pool()

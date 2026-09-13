@@ -131,9 +131,9 @@ def sample_jurisdiction(
     eventual clearance — timing is meaningless for blocked paths),
     then a duration from that path's p50/p90 lognormal fit.
     """
-    paths = [p for p in sim.possible_paths if p.is_terminal_clear]
+    paths = [p for p in sim.possible_paths if p.is_terminal_clear and p.path_probability > 0]
     if not paths:
-        paths = list(sim.possible_paths)
+        paths = [p for p in sim.possible_paths if p.path_probability > 0]
     if not paths:
         return None
 
@@ -148,6 +148,11 @@ def sample_jurisdiction(
         mask = idx == i
         cnt = int(mask.sum())
         if not cnt:
+            continue
+        if (path.total_duration_days_p50 == 0
+                and path.total_duration_days_p75 == 0
+                and path.total_duration_days_p90 == 0):
+            out[mask] = 0.0
             continue
         mu, sigma = fit_lognormal(
             max(path.total_duration_days_p50, 1),

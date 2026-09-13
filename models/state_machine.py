@@ -2,7 +2,7 @@
 Regulatory state machine models.
 Central to the "regulatory path forecaster" design.
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from datetime import date
 from enum import Enum
@@ -66,7 +66,8 @@ class JurisdictionSimulation(BaseModel):
     jurisdiction: JurisdictionName
     jurisdiction_label: str = ""  # actual name (e.g. "STATE_PUC_PA")
     is_required: bool
-    confidence_required: float
+    confidence_required: float = Field(ge=0.0, le=1.0)
+    applicability: float = Field(default=1.0, ge=0.0, le=1.0)
     source_of_requirement: str
     states: list[StateMachineState]
     transitions: list[StateTransition]
@@ -76,6 +77,11 @@ class JurisdictionSimulation(BaseModel):
     expected_duration_days_p90: int
     contractual_filing_deadline: Optional[date] = None
     contractual_filing_deadline_days: Optional[int] = None
+
+    @model_validator(mode="after")
+    def derive_applicability(self) -> "JurisdictionSimulation":
+        self.applicability = 1.0 if self.is_required else self.confidence_required
+        return self
 
 
 class FullSimulationResult(BaseModel):

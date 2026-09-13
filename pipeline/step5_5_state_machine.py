@@ -1,7 +1,7 @@
 """
 Step 5.5: Regulatory State Machine Simulation
 
-Runs state machine simulation for each required jurisdiction.
+Runs state machine simulation for every mapped jurisdiction, with applicability.
 """
 import logging
 from models.deal import DealParameters
@@ -10,7 +10,8 @@ from models.regulatory import JurisdictionRequirement
 from models.antitrust import OverlapAssessment
 from models.climate import RegulatoryClimate
 from models.comparables import ComparableGroup
-from models.state_machine import FullSimulationResult, JurisdictionSimulation
+from models.state_machine import FullSimulationResult, JurisdictionSimulation, PathOutcome
+from state_machines.base import expected_path_durations
 from state_machines.hsr import HSRStateMachine
 from state_machines.ec import ECStateMachine
 from state_machines.cma import CMAStateMachine
@@ -40,7 +41,7 @@ async def simulate_regulatory_paths(
     merger_agreement: ParsedMergerAgreement | None,
     climate: RegulatoryClimate | None = None,
 ) -> FullSimulationResult:
-    """Run state machine simulation for all required jurisdictions."""
+    """Simulate required and probabilistic regulatory constraints."""
 
     # Assess regulatory climate if not provided
     if climate is None:
@@ -55,13 +56,10 @@ async def simulate_regulatory_paths(
     # Aggregate comparable stats across all groups
     comparable_stats = _aggregate_comparable_stats(comparable_groups)
 
-    # Run simulation for each required jurisdiction
+    # Run simulation for every mapped jurisdiction
     simulations: list[JurisdictionSimulation] = []
 
     for req in regulatory_map:
-        if not req.is_required and req.confidence < 0.6:
-            continue
-
         machine_class = MACHINE_MAP.get(req.jurisdiction, GenericStateMachine)
         machine = machine_class()
 
@@ -85,11 +83,41 @@ async def simulate_regulatory_paths(
             )
             sim.is_required = req.is_required
             sim.confidence_required = req.confidence
+            sim.applicability = req.applicability
             sim.source_of_requirement = req.source
             sim.jurisdiction_label = req.jurisdiction
+            if sim.applicability < 1.0:
+                # Enumeration can prune tiny branches: normalize the retained
+                # conditional paths before assigning exactly p to applicability.
+                total_prob = sum(p.path_probability for p in sim.possible_paths) or 1.0
+                for path in sim.possible_paths:
+                    path.path_probability *= sim.applicability / total_prob
+                sim.possible_paths.insert(0, PathOutcome(
+                    path_id=f"{req.jurisdiction.lower()}_not_applicable",
+                    path_label="not applicable", states=[],
+                    total_duration_days_p50=0, total_duration_days_p75=0,
+                    total_duration_days_p90=0,
+                    path_probability=1.0 - sim.applicability,
+                    is_terminal_clear=True,
+                ))
+                (
+                    sim.expected_duration_days_p50,
+                    sim.expected_duration_days_p75,
+                    sim.expected_duration_days_p90,
+                ) = expected_path_durations(sim.possible_paths)
             simulations.append(sim)
         except Exception as e:
             logger.error(f"Simulation failed for {req.jurisdiction}: {e}")
+
+    optional = {
+        s.jurisdiction_label or s.jurisdiction.value: s.applicability
+        for s in simulations if s.applicability < 1.0
+    }
+    if optional:
+        logger.info(
+            "Probabilistic jurisdiction applicability for %s/%s: %s",
+            deal_params.acquirer_ticker, deal_params.target_ticker, optional,
+        )
 
     if not simulations:
         return FullSimulationResult(
@@ -100,8 +128,12 @@ async def simulate_regulatory_paths(
             critical_path_duration_p90=0,
         )
 
-    # Determine critical path — jurisdiction with longest expected duration
-    critical = max(simulations, key=lambda s: s.expected_duration_days_p50)
+    # Label a likely requirement; retain the requested HSR/longest fallback
+    # when every modeled jurisdiction has applicability below 50%.
+    candidates = [s for s in simulations if s.applicability >= 0.5]
+    if not candidates:
+        candidates = [s for s in simulations if s.jurisdiction.value == "HSR"] or simulations
+    critical = max(candidates, key=lambda s: s.expected_duration_days_p50)
 
     # Also check p75/p90 for potential bottleneck shifts
     critical_p75 = max(simulations, key=lambda s: s.expected_duration_days_p75)

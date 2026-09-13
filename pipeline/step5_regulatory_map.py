@@ -497,7 +497,7 @@ async def _infer_conditions_from_comps(
 def _apply_calibrated_activation(
     requirements: dict[str, JurisdictionRequirement],
 ) -> None:
-    """Add SAMR/CFIUS from calibrated activation rates if missing.
+    """Add probabilistic SAMR/CFIUS applicability from population rates.
 
     Only fires when comparable precedent didn't already add them
     and the calibrated rate exceeds MIN_ACTIVATION_RATE_THRESHOLD.
@@ -518,8 +518,8 @@ def _apply_calibrated_activation(
             continue
         requirements[jur] = JurisdictionRequirement(
             jurisdiction=jur,
-            is_required=True,
-            confidence=min(cal_rate, 0.6),
+            is_required=False,
+            confidence=cal_rate,
             source="calibrated_activation_rate",
             notes=(
                 f"Calibrated {jur} activation rate: "

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 async def run_backtest_deal(
     deal_input: DealInput,
     exclude_deal_pk: int,
+    no_persist: bool = False,
 ) -> DealTimingReport:
     """Run the pipeline for a single deal with data leakage prevention.
 
@@ -32,6 +33,8 @@ async def run_backtest_deal(
       - Step 0 MARS enrichment (mars_deal_pk set to None)
       - Step 2 comparable groups (filtered out post-query)
       - Step 4 antitrust MARS lookup (skipped)
+
+    With no_persist=True, never log a prediction to timing_predictions.
     """
     logger.info(
         f"Backtest run: {deal_input.acquirer_ticker} / "
@@ -169,9 +172,10 @@ async def run_backtest_deal(
     report.comparable_deals_used = total_comps
 
     # Log prediction (non-fatal)
-    try:
-        await log_prediction(report, exclude_deal_pk)
-    except Exception as e:
-        logger.warning(f"Prediction logging failed: {e}")
+    if not no_persist:
+        try:
+            await log_prediction(report, exclude_deal_pk)
+        except Exception as e:
+            logger.warning(f"Prediction logging failed: {e}")
 
     return report
