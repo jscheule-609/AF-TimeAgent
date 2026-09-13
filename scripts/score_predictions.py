@@ -5,6 +5,7 @@ it is safe as a weekly cron on house-mars:
 
     docker exec timeagent python -m scripts.score_predictions            # dry-run (default)
     docker exec timeagent python -m scripts.score_predictions --apply    # write
+    docker exec timeagent python -m scripts.score_predictions --apply --rescore  # + fix stale error cols
     docker exec timeagent python -m scripts.score_predictions --report   # calibration by model_version
     docker exec timeagent python -m scripts.score_predictions --report --json /tmp/cal.json
 
@@ -104,6 +105,38 @@ _TERMINATED_UPDATE = """
     RETURNING tp.deal_pk
 """
 
+# Scored rows whose derived columns no longer match p50/p75/p90 -- happens
+# when a scored deal is re-predicted (the backtest UPSERT replaces the
+# percentiles; before the step7 prediction_id fix its actuals update then
+# matched nothing).  --rescore recomputes them; idempotent.
+_STALE_WHERE = """
+    WHERE tp.actual_close_date IS NOT NULL
+      AND (tp.p50_error_days IS DISTINCT FROM tp.actual_close_date - tp.p50_close_date
+        OR tp.p75_error_days IS DISTINCT FROM tp.actual_close_date - tp.p75_close_date
+        OR tp.p90_error_days IS DISTINCT FROM tp.actual_close_date - tp.p90_close_date
+        OR tp.close_within_p50 IS DISTINCT FROM (tp.actual_close_date <= tp.p50_close_date)
+        OR tp.close_within_p75 IS DISTINCT FROM (tp.actual_close_date <= tp.p75_close_date)
+        OR tp.close_within_p90 IS DISTINCT FROM (tp.actual_close_date <= tp.p90_close_date))
+"""
+
+_STALE_COUNT = (
+    "SELECT tp.model_version, count(*) AS n FROM timing_predictions tp"
+    + _STALE_WHERE + " GROUP BY 1"
+)
+
+_RESCORE_UPDATE = """
+    UPDATE timing_predictions tp SET
+        p50_error_days   = tp.actual_close_date - tp.p50_close_date,
+        p75_error_days   = tp.actual_close_date - tp.p75_close_date,
+        p90_error_days   = tp.actual_close_date - tp.p90_close_date,
+        close_within_p50 = (tp.actual_close_date <= tp.p50_close_date),
+        close_within_p75 = (tp.actual_close_date <= tp.p75_close_date),
+        close_within_p90 = (tp.actual_close_date <= tp.p90_close_date),
+        updated_at       = NOW()
+""" + _STALE_WHERE + """
+    RETURNING tp.deal_pk
+"""
+
 _UNSCORABLE = """
     SELECT count(*) AS n
     FROM timing_predictions tp
@@ -114,15 +147,22 @@ _UNSCORABLE = """
 """
 
 
-async def score(apply: bool) -> dict:
-    """Dry-run (default) or apply the closed/terminated scoring updates."""
+async def score(apply: bool, rescore: bool = False) -> dict:
+    """Dry-run (default) or apply the closed/terminated scoring updates.
+
+    ``rescore`` also recomputes the derived error/coverage columns of
+    already-scored rows whose percentiles changed since they were scored.
+    """
     pool = await get_pool()
-    out: dict = {"apply": apply}
+    out: dict = {"apply": apply, "rescore": rescore}
     async with pool.acquire() as conn:
         closed = await conn.fetch(_CLOSED_CANDIDATES)
         term = await conn.fetch(_TERMINATED_CANDIDATES)
         anomalies = await conn.fetch(_CLOSED_ANOMALIES)
         unscorable = await conn.fetchval(_UNSCORABLE)
+        stale = await conn.fetch(_STALE_COUNT)
+        stale_by_ver = {r["model_version"]: r["n"] for r in stale}
+        out["stale_scored_rows"] = stale_by_ver
 
         by_ver: dict[str, int] = {}
         for r in closed:
@@ -138,6 +178,8 @@ async def score(apply: bool) -> dict:
         print(f"Closed, scoreable now : {len(closed)}  {by_ver}")
         print(f"Terminated, to flag   : {len(term)}")
         print(f"Completed, no close dt: {unscorable} (left unscored)")
+        print(f"Scored rows w/ stale errors: {sum(stale_by_ver.values())}  "
+              f"{stale_by_ver}" + ("" if rescore else "  (pass --rescore to fix)"))
         if anomalies:
             pks = [r["deal_pk"] for r in anomalies][:20]
             print(f"Skipped (close < announce or no announce): "
@@ -153,10 +195,13 @@ async def score(apply: bool) -> dict:
         async with conn.transaction():
             closed_done = await conn.fetch(_CLOSED_UPDATE)
             term_done = await conn.fetch(_TERMINATED_UPDATE)
+            rescored = await conn.fetch(_RESCORE_UPDATE) if rescore else []
         out.update(closed_written=len(closed_done),
-                   terminated_written=len(term_done))
+                   terminated_written=len(term_done),
+                   rescored=len(rescored))
         print(f"\nWritten: {len(closed_done)} closed scored, "
-              f"{len(term_done)} terminated flagged.")
+              f"{len(term_done)} terminated flagged, "
+              f"{len(rescored)} rescored.")
     return out
 
 
@@ -292,6 +337,9 @@ def main() -> int:
     )
     parser.add_argument("--apply", action="store_true",
                         help="Write the updates (default: dry-run)")
+    parser.add_argument("--rescore", action="store_true",
+                        help="Also recompute error/coverage columns of scored "
+                             "rows whose percentiles changed (with --apply)")
     parser.add_argument("--report", action="store_true",
                         help="Print calibration by model_version")
     parser.add_argument("--json", type=str, default=None,
@@ -304,7 +352,7 @@ def main() -> int:
             if args.report:
                 await report(args.json)
             else:
-                await score(apply=args.apply)
+                await score(apply=args.apply, rescore=args.rescore)
         finally:
             await close_pool()
 
