@@ -1,8 +1,48 @@
 """LLM-based extraction helpers via OpenRouter."""
 import json
+import logging
 import re
 import httpx
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class LLMDisabled(RuntimeError):
+    """Raised by call_llm when the LLM leg is off or has no key.
+
+    Every call site already catches Exception and degrades, so this only
+    changes *when* the failure happens: before any prompt is built or
+    document downloaded, not after a 403 from OpenRouter.
+    """
+
+
+_VALID_MODES = ("openrouter", "off")
+
+
+def llm_mode() -> str:
+    """Normalised TIMEAGENT_LLM_MODE: "openrouter" (default) or "off".
+    Anything else is treated as "off" (fail closed) and logged once."""
+    from config.settings import Settings
+    mode = (Settings().timeagent_llm_mode or "openrouter").strip().lower()
+    if mode not in _VALID_MODES:
+        if mode not in _warned_modes:
+            _warned_modes.add(mode)
+            logger.warning(
+                "TIMEAGENT_LLM_MODE=%r is not one of %s — treating as 'off'",
+                mode, _VALID_MODES,
+            )
+        return "off"
+    return mode
+
+
+_warned_modes: set[str] = set()
+
+
+def llm_available() -> bool:
+    """True when TIMEAGENT_LLM_MODE=openrouter and an OpenRouter key is set."""
+    from config.settings import Settings
+    return llm_mode() == "openrouter" and bool(Settings().openrouter_api_key)
 
 
 async def call_llm(
@@ -17,6 +57,10 @@ async def call_llm(
 
     model = model or settings.extraction_model
     api_key = api_key or settings.openrouter_api_key
+    if llm_mode() == "off":
+        raise LLMDisabled("LLM step skipped: TIMEAGENT_LLM_MODE=off")
+    if not api_key:
+        raise LLMDisabled("LLM step skipped: OPENROUTER_API_KEY is not set")
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(

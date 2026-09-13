@@ -18,8 +18,14 @@ class Settings(BaseSettings):
     # Brave Search API
     brave_api_key: str = ""
 
-    # OpenRouter (for LLM extraction)
+    # OpenRouter (for LLM extraction). TIMEAGENT_LLM_MODE=off skips every
+    # LLM-backed step (10-K parse, EDGAR press-release / merger-agreement
+    # parse, 10-K antitrust overlap) before any document is downloaded; the
+    # pipeline then runs on MARS data + comparables alone. Use it while the
+    # key is unfunded (403) instead of paying EDGAR round-trips for nothing.
+    # Values: "openrouter" (default) | "off".
     openrouter_api_key: str = ""
+    timeagent_llm_mode: str = "openrouter"
     extraction_model: str = "google/gemini-2.5-flash"
     reasoning_model: str = "google/gemini-2.5-flash"
 

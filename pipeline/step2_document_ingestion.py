@@ -7,6 +7,7 @@ import logging
 from datetime import date
 from models.deal import DealParameters
 from models.documents import ParsedTenK, ParsedMergerAgreement
+from parsers.llm_extraction import llm_available
 from parsers.tenk_parser import parse_tenk
 from parsers.merger_agreement_parser import parse_merger_agreement
 
@@ -70,6 +71,13 @@ async def _ingest_tenk(
     filed_before: date | None = None,
 ) -> ParsedTenK | None:
     """Fetch and parse the most recent 10-K filed before cutoff."""
+    # parse_tenk is LLM-only: without a usable key the ~2 MB EDGAR
+    # download would be thrown away, so skip it up front.
+    if not llm_available():
+        logger.info(
+            f"10-K ingestion skipped for {ticker}: LLM disabled or no key"
+        )
+        return None
     try:
         from sec_api_tools import (
             EdgarClient, search_filings, get_filing_document,
@@ -135,6 +143,11 @@ async def _ingest_merger_agreement(
     deal_params: DealParameters,
 ) -> ParsedMergerAgreement | None:
     """Find and parse the merger agreement."""
+    if not llm_available():
+        logger.info(
+            "Merger agreement EDGAR fallback skipped: LLM disabled or no key"
+        )
+        return None
     try:
         from sec_api_tools import EdgarClient
         async with EdgarClient() as client:
