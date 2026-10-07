@@ -18,7 +18,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import asyncpg
 from fastapi import FastAPI, HTTPException
@@ -121,6 +121,10 @@ class HealthResponse(BaseModel):
     # skipped and predictions run on MARS data + comparables.
     llm_mode: str = "openrouter"
     llm_enabled: bool = True
+    # new_deal notifications not auto-predicted because the deal is not
+    # Active or was announced more than TIMEAGENT_AUTOPREDICT_MAX_AGE_DAYS
+    # ago (backfilled history); counted since process start.
+    autopredict_skipped_total: int = 0
 
 
 # ── Endpoints ─────────────────────────────────────────────
@@ -291,6 +295,7 @@ async def health():
         listener_enabled=_listen_enabled(),
         llm_mode=llm_mode(),
         llm_enabled=llm_available(),
+        autopredict_skipped_total=_autopredict_skipped,
     )
 
 
@@ -358,6 +363,7 @@ def _report_to_result(report, elapsed, deal_pk: int) -> PredictionResult:
 # ── NOTIFY Listener ───────────────────────────────────────
 
 _listener_active = False
+_autopredict_skipped = 0
 
 
 async def _notify_listener(dsn: str):
@@ -403,10 +409,49 @@ def _on_new_deal(conn, pid, channel, payload):
         logger.error(f"Failed to handle NOTIFY: {e}")
 
 
+def _autopredict_skip_reason(
+    row, today: date, max_age_days: int
+) -> str | None:
+    """Why a new_deal row should not be auto-predicted, or None to predict.
+
+    Backfilled historical deals (e.g. the 2019 rows of 09-30) still fire
+    new_deal; predicting them writes a post-hoc row the scorer then has to
+    ignore. The nightly batch_run covers Active deals this gate skips.
+    """
+    if row is None:
+        return "not found"
+    if row["deal_status"] != "Active":
+        return f"deal_status={row['deal_status']}"
+    ann = row["date_announced"]
+    if ann is None:
+        return "no date_announced"
+    if ann < today - timedelta(days=max_age_days):
+        return f"announced {ann} (> {max_age_days} d ago)"
+    return None
+
+
 async def _auto_predict(deal_pk: int):
     """Background prediction for new deal."""
+    global _autopredict_skipped
     # Wait 30s for the deal to be fully populated in MARS
     await asyncio.sleep(30)
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT deal_status, date_announced FROM deals "
+                "WHERE deal_pk = $1",
+                deal_pk,
+            )
+    except Exception as e:
+        logger.error(f"Auto-predict lookup failed for {deal_pk}: {e}")
+        return
+    reason = _autopredict_skip_reason(
+        row, date.today(), _autopredict_max_age_days()
+    )
+    if reason:
+        _autopredict_skipped += 1
+        logger.info(f"Auto-predict skipped deal_pk={deal_pk}: {reason}")
+        return
     logger.info(f"Auto-predicting deal_pk={deal_pk}")
     try:
         report, elapsed = await _run_pipeline(deal_pk)
@@ -427,6 +472,14 @@ def _listen_enabled() -> bool:
     return os.environ.get("AGENT_LISTEN_ENABLED", "1").strip().lower() not in (
         "0", "false", "no", "off",
     )
+
+
+def _autopredict_max_age_days() -> int:
+    """TIMEAGENT_AUTOPREDICT_MAX_AGE_DAYS (default 120): listener age gate."""
+    try:
+        return int(os.environ.get("TIMEAGENT_AUTOPREDICT_MAX_AGE_DAYS", "120"))
+    except ValueError:
+        return 120
 
 
 def _build_dsn() -> str:
