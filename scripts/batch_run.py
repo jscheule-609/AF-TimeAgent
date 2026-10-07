@@ -1,17 +1,24 @@
 """Batch run timing agent on active deals, write results to stdout.
 
-Re-predicts ALL Active+Pending deals on every run (upsert keeps one
-row per deal_pk) so estimates tighten as milestones are observed.
-Deals whose status has flipped are excluded — the April-2026 batch
-predicted 28 deals that had already closed.
+Re-predicts ALL Active deals on every run (upsert keeps one row per
+deal_pk) so estimates tighten as milestones are observed.  Deals whose
+status has flipped are excluded — the April-2026 batch predicted 28
+deals that had already closed.  deal_outcome is not filtered (8 Active
+deals with a NULL outcome went 5 months without a re-predict) and deals
+without a target ticker run too, labelled no-ticker: the engine loads
+by deal_pk.
+
+    python -m scripts.batch_run            # table + batch40_results.json
+    python -m scripts.batch_run --quiet    # cron: summary + failures only
 """
+import argparse
 import asyncio
 import sys
 import json
 import logging
 import warnings
 from collections import Counter
-from datetime import date
+from datetime import datetime, timezone
 
 sys.stdout.reconfigure(encoding='utf-8')
 logging.basicConfig(level=logging.WARNING)
@@ -22,29 +29,38 @@ from pipeline.orchestrator import run_timing_estimation
 from db.connection import get_pool, close_pool
 
 
-async def main():
+async def main(quiet: bool = False):
     pool = await get_pool()
     async with pool.acquire() as c:
         deals = await c.fetch("""
-            SELECT d.deal_pk, pt.ticker tgt,
+            SELECT d.deal_pk, t.ticker tgt,
                    CAST(d.deal_value_usd AS FLOAT) val,
                    d.closing_guidance_arbjournal aj
             FROM deals d
-            -- OQ-N20: v1 parties -> v2 deal_parties + party_entities
-            LEFT JOIN deal_parties dp_t ON d.deal_pk = dp_t.deal_pk
-                AND dp_t.role_type = 'target'
-            LEFT JOIN party_entities pt ON pt.party_id = dp_t.party_id
+            -- OQ-N20: v1 parties -> v2 deal_parties + party_entities;
+            -- one ticker per deal even with several target parties
+            LEFT JOIN LATERAL (
+                SELECT pt.ticker
+                FROM deal_parties dp_t
+                JOIN party_entities pt ON pt.party_id = dp_t.party_id
+                WHERE dp_t.deal_pk = d.deal_pk
+                  AND dp_t.role_type = 'target'
+                  AND pt.ticker IS NOT NULL AND pt.ticker != ''
+                ORDER BY pt.party_id
+                LIMIT 1
+            ) t ON true
             WHERE d.deal_status = 'Active'
-              AND d.deal_outcome = 'Pending'
-              AND pt.ticker IS NOT NULL AND pt.ticker != ''
             ORDER BY d.deal_value_usd DESC NULLS LAST
         """)
 
+    started = datetime.now(timezone.utc)
+    no_ticker = [d['deal_pk'] for d in deals if not d['tgt']]
     results = []
     for i, d in enumerate(deals):
         pk = d['deal_pk']
-        tgt = d['tgt'] or '?'
-        sys.stderr.write(f'[{i+1}/{len(deals)}] {tgt} ')
+        tgt = d['tgt'] or 'no-ticker'
+        if not quiet:
+            sys.stderr.write(f'[{i+1}/{len(deals)}] {tgt} ')
         try:
             r = await run_timing_estimation(DealInput(deal_pk=pk))
             gr = r.guidance_reconciliation
@@ -61,19 +77,32 @@ async def main():
                 'comps': r.comparable_deals_used,
                 'risks': len(r.risk_flags),
             })
-            sys.stderr.write(f'OK\n')
+            if not quiet:
+                sys.stderr.write(f'OK\n')
         except Exception as e:
             results.append({
                 'tgt': tgt[:22], 'pk': pk,
                 'p50': 'FAIL', 'flag': 'error',
                 'gap': 0, 'unexpl': 0, 'aj': str(d['aj'] or '-')[:12],
+                'err': str(e)[:200],
             })
-            sys.stderr.write(f'FAIL\n')
+            if not quiet:
+                sys.stderr.write(f'FAIL\n')
 
     await close_pool()
 
     ok = [r for r in results if r['p50'] != 'FAIL']
     fail = [r for r in results if r['p50'] == 'FAIL']
+    if quiet:
+        secs = (datetime.now(timezone.utc) - started).total_seconds()
+        print(f'{started:%Y-%m-%dT%H:%M:%SZ} batch_run: '
+              f'{len(ok)}/{len(results)} ok, {len(fail)} failed, '
+              f'{len(no_ticker)} no-ticker, {secs:.0f}s')
+        if no_ticker:
+            print(f'  no-ticker: {no_ticker}')
+        for r in fail:
+            print(f'  FAIL deal_pk={r["pk"]} {r["tgt"]}: {r["err"]}')
+        return
     print(f'=== {len(ok)}/{len(results)} succeeded, {len(fail)} failed ===\n')
 
     print(f'{"Target":24} {"P50":12} {"AJ Guide":12} {"Flag":14} {"Gap":>6} {"Unexp":>6} {"Adj":>4} {"Crit":10}')
@@ -108,4 +137,8 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description='Re-predict all Active deals')
+    parser.add_argument('--quiet', action='store_true',
+                        help='cron mode: summary line and failures only, '
+                             'no table, no batch40_results.json')
+    asyncio.run(main(quiet=parser.parse_args().quiet))
