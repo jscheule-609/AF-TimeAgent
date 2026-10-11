@@ -102,5 +102,14 @@ baseline the model must beat.
   jurisdiction-specific machines for PUC/banking remain to do.
 - Track weights are hand-set defaults; grid-search them against the
   backtest once enough scored predictions accumulate.
-- `update_prediction_actuals` still needs a scheduled job that joins
-  freshly-closed deals to open predictions (see AF-AJ weekly update).
+- ~~`update_prediction_actuals` still needs a scheduled job~~ — done.
+  Two house-mars crons now run against MARS:
+  - `scripts.score_predictions --apply --rescore`, Sundays 06:30 UTC,
+    writes actuals and errors for closed deals. A prediction dated after
+    the close gets actuals only and never errors. `--report` counts such
+    rows as `posthoc_n`.
+  - `scripts.batch_run --quiet`, nightly 03:25 UTC, re-predicts every
+    Active deal before the 03:45 EV run. The `new_deal` listener only
+    auto-predicts Active deals announced within
+    `TIMEAGENT_AUTOPREDICT_MAX_AGE_DAYS` (default 120); the nightly batch
+    covers the rest.
