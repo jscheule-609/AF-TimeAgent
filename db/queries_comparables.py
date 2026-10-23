@@ -146,6 +146,7 @@ async def get_acquirer_prior_deals(acquirer_name: str, limit: int = 15) -> list[
             {_PARTY_ENTITY_JOINS}
             WHERE COALESCE(pe_acq.short_name, pe_acq.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
+              AND COALESCE(d.is_ma_deal, TRUE)
             ORDER BY d.date_announced DESC
             LIMIT $2
             """,
@@ -173,6 +174,7 @@ async def get_target_prior_deals(
             {_PARTY_ENTITY_JOINS}
             WHERE COALESCE(pe_tgt.short_name, pe_tgt.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
+              AND COALESCE(d.is_ma_deal, TRUE)
             ORDER BY d.date_announced DESC
             LIMIT $2
             """,
@@ -196,6 +198,7 @@ async def get_sector_comparable_deals(
             WHERE d.industry = $1
               AND d.date_announced >= NOW() - ($2 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
+              AND COALESCE(d.is_ma_deal, TRUE)
             ORDER BY d.date_announced DESC
             LIMIT $3
             """,
@@ -221,6 +224,7 @@ async def get_size_matched_deals(
             WHERE d.deal_value_usd BETWEEN $1 AND $2
               AND d.date_announced >= NOW() - ($3 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
+              AND COALESCE(d.is_ma_deal, TRUE)
             ORDER BY d.date_announced DESC
             LIMIT $4
             """,
