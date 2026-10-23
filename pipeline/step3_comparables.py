@@ -113,13 +113,15 @@ def _row_to_comparable(row: dict, source: ComparableSource) -> ComparableDeal:
 
     return ComparableDeal(
         deal_pk=row.get("deal_pk", 0),
-        deal_id=row.get("deal_id", ""),
-        acquirer=row.get("acquirer_name", ""),
-        target=row.get("target_name", ""),
+        deal_id=row.get("deal_id") or "",
+        acquirer=row.get("acquirer_name") or "",
+        target=row.get("target_name") or "",
         acquirer_country=row.get("acquirer_country"),
         target_country=row.get("target_country"),
-        sector=row.get("gics_sector", ""),
-        industry=row.get("industry", ""),
+        # MARS rows can carry NULL sector / industry (e.g. AUTORESEARCH-only
+        # deals closed by hand); dict.get's default never applies to a NULL.
+        sector=row.get("gics_sector") or "",
+        industry=row.get("industry") or "",
         deal_value_usd=row.get("deal_value_usd"),
         deal_structure=row.get("type_of_consideration") or "cash",
         buyer_type=classify_buyer_type(
@@ -129,7 +131,7 @@ def _row_to_comparable(row: dict, source: ComparableSource) -> ComparableDeal:
         announcement_date=row.get("date_announced", date.today()),
         close_date=row.get("actual_completion_date"),
         timeline_days=row.get("timeline_days"),
-        deal_outcome=row.get("deal_outcome", ""),
+        deal_outcome=row.get("deal_outcome") or "",
         jurisdictions_required=jurisdictions,
         had_second_request=bool(row.get("has_second_request")),
         had_ec_phase_2=row.get("phase_2_date") is not None,
