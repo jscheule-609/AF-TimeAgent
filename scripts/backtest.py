@@ -26,6 +26,7 @@ load_dotenv()  # must run before sec_api_tools is imported
 import numpy as np
 
 from db.connection import get_pool, close_pool
+from db.queries_comparables import D2_COHORT_FILTER
 from db.queries_prediction import update_prediction_actuals
 from pipeline.backtest_runner import run_backtest_deal
 from models.deal import DealInput
@@ -57,7 +58,7 @@ async def fetch_backtest_universe(
     end = announced_before or date.today()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT
                 d.deal_pk,
                 pa.ticker  AS acquirer_ticker,
@@ -90,6 +91,8 @@ async def fetch_backtest_universe(
               AND pa.ticker IS NOT NULL
               AND pt.ticker IS NOT NULL
               AND ($4::bigint[] IS NULL OR d.deal_pk = ANY($4::bigint[]))
+              -- D2 / migration 046: historical cohort filter
+              {D2_COHORT_FILTER}
             ORDER BY d.date_announced DESC
             LIMIT $3
             """,

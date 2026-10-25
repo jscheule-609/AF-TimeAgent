@@ -6,6 +6,7 @@ similarity-weighted percentile computation.
 """
 from typing import Optional
 from db.connection import get_pool
+from db.queries_comparables import D2_COHORT_FILTER
 
 
 # Each pair is (from_milestone, to_milestone, interval_name)
@@ -140,6 +141,8 @@ async def get_global_baseline_intervals() -> list[dict]:
                   AND m1.actual_date IS NOT NULL
                   AND m2.actual_date IS NOT NULL
                   AND d.deal_outcome = 'Closed'
+                  -- D2 / migration 046: historical cohort filter
+                  {D2_COHORT_FILTER}
                   AND (m2.actual_date - m1.actual_date)
                       BETWEEN 0 AND 365
                 """,

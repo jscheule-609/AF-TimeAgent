@@ -116,6 +116,23 @@ LEFT JOIN party_entities pe_tgt
     ON dp_tgt.party_id = pe_tgt.party_id
 """
 
+# D2 / migration 046 (MARS Freshness & Re-parse plan): historical cohorts
+# (comparables, fit, calibration, backtest -- never the Active set) leave out
+# rows whose deals.outcome_reason says the outcome is unknown (coverage_dropped,
+# no_signal: counting them would bias the rates the day one lands here)
+# or the row is not a tracked deal (autoresearch_shell, not_a_deal), and
+# completed rows with no actual_completion_date (592 in the book on
+# 2026-10-25, many of them mislabelled failures).  to_jsonb(d) ->> reads
+# outcome_reason when the column exists and NULL on a DB one migration behind,
+# so the SQL is valid either way.  The cohorts select on deal_outcome and
+# deal_status / deal_outcome can drift, so the undated guard reads both.
+# Requires the deals alias ``d``.
+D2_COHORT_FILTER = """AND COALESCE(to_jsonb(d) ->> 'outcome_reason', '')
+                  NOT IN ('coverage_dropped', 'no_signal', 'autoresearch_shell', 'not_a_deal')
+              AND (d.actual_completion_date IS NOT NULL
+                   OR (d.deal_status IS DISTINCT FROM 'Completed'
+                       AND d.deal_outcome IS DISTINCT FROM 'Closed'))"""
+
 
 async def find_deal_by_tickers(acquirer_ticker: str, target_ticker: str) -> Optional[dict]:
     """Find a deal in MARS by acquirer and target tickers."""
@@ -147,6 +164,7 @@ async def get_acquirer_prior_deals(acquirer_name: str, limit: int = 15) -> list[
             WHERE COALESCE(pe_acq.short_name, pe_acq.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
               AND COALESCE(d.is_ma_deal, TRUE)
+              {D2_COHORT_FILTER}
             ORDER BY d.date_announced DESC
             LIMIT $2
             """,
@@ -175,6 +193,7 @@ async def get_target_prior_deals(
             WHERE COALESCE(pe_tgt.short_name, pe_tgt.legal_name) ILIKE '%' || $1 || '%'
               AND d.deal_outcome IN ('Closed', 'Terminated')
               AND COALESCE(d.is_ma_deal, TRUE)
+              {D2_COHORT_FILTER}
             ORDER BY d.date_announced DESC
             LIMIT $2
             """,
@@ -199,6 +218,7 @@ async def get_sector_comparable_deals(
               AND d.date_announced >= NOW() - ($2 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
               AND COALESCE(d.is_ma_deal, TRUE)
+              {D2_COHORT_FILTER}
             ORDER BY d.date_announced DESC
             LIMIT $3
             """,
@@ -225,6 +245,7 @@ async def get_size_matched_deals(
               AND d.date_announced >= NOW() - ($3 || ' years')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
               AND COALESCE(d.is_ma_deal, TRUE)
+              {D2_COHORT_FILTER}
             ORDER BY d.date_announced DESC
             LIMIT $4
             """,
