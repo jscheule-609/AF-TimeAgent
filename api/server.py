@@ -242,26 +242,9 @@ _ACTIVE_LATEST_SQL = """
 """
 
 
-@app.get("/results/{deal_pk}")
-async def get_results(deal_pk: int):
-    """Latest timing prediction for a deal (v_latest_timing_prediction)."""
-    if not pool:
-        raise HTTPException(503, "Not initialized")
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(_LATEST_PREDICTION_SQL, deal_pk)
-
-    if not row:
-        raise HTTPException(
-            404, f"No prediction for deal_pk={deal_pk}"
-        )
-
-    return {
-        k: (str(v) if hasattr(v, 'isoformat') else v)
-        for k, v in dict(row).items()
-    }
-
-
+# /results/active is declared before /results/{deal_pk}: FastAPI matches
+# routes in declaration order, and declared after it, "active" was parsed
+# as deal_pk and the call returned 422.
 @app.get("/results/active")
 async def get_active_results():
     """All active deals with their latest timing prediction."""
@@ -288,6 +271,26 @@ async def get_active_results():
          for k, v in dict(r).items()}
         for r in rows
     ]
+
+
+@app.get("/results/{deal_pk}")
+async def get_results(deal_pk: int):
+    """Latest timing prediction for a deal (v_latest_timing_prediction)."""
+    if not pool:
+        raise HTTPException(503, "Not initialized")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_LATEST_PREDICTION_SQL, deal_pk)
+
+    if not row:
+        raise HTTPException(
+            404, f"No prediction for deal_pk={deal_pk}"
+        )
+
+    return {
+        k: (str(v) if hasattr(v, 'isoformat') else v)
+        for k, v in dict(row).items()
+    }
 
 
 @app.get("/health", response_model=HealthResponse)
