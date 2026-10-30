@@ -93,6 +93,57 @@ SEC ticker resolution fails), supports `--start/--end` time windows
 to pair with `fit_model --cutoff`, and prints the guidance-only
 baseline the model must beat.
 
+## Append-only predictions and writer attribution (2026-10-31)
+
+MARS point-in-time, Phase 1 Layer 4 (AF-AJ migration **048b**, applied
+on MARS before this code deploys):
+
+- `timing_predictions` is **append-only**. `uq_timing_predictions_deal`
+  is gone; `db.queries_prediction.store_prediction` is a plain INSERT
+  (no `ON CONFLICT`) and every run writes a new row with a fresh
+  `prediction_id`. New columns: `run_id` (the batch / API call / NOTIFY
+  / CLI run that wrote it), `as_of_date` (the prediction date) and
+  `input_snapshot_ref` JSONB — `deal_updated_at` (deals.updated_at as
+  read), `comparable_deal_pks`, `model_version`, `guidance_source`,
+  `calibration_fingerprint` (sha256[:12] of `config/calibration.json`),
+  plus `as_of`, `observed_milestones`, `guidance_anchor`.
+- The four ad-hoc snapshot tables (`timing_predictions_pre_c2_20260930`,
+  `_v010_snapshot`, `_v010_snapshot_20260913`,
+  `_v020_july_snapshot_20260913`) are folded into `timing_predictions`
+  by 048b as `run_id = 'snapshot:<table>'` and dropped; nothing here
+  references them.
+- Readers take the **latest row per deal** from
+  `v_latest_timing_prediction` (`DISTINCT ON (deal_pk)` ordered by
+  `prediction_date DESC`, non-snapshot rows first, `created_at DESC`,
+  `prediction_id DESC`): `GET /results/{deal_pk}`,
+  `GET /results/active`, `db.queries_prediction.get_latest_prediction`.
+  `batch_run` and the `new_deal` listener never check for an existing
+  row, so they need no repoint.
+- `scripts.score_predictions` scores **every** unscored row
+  (`actual_close_date IS NULL`) of a resolved deal on its own
+  `prediction_date` — a mid-deal re-predict is a forecast, a row written
+  after the close is post-hoc — and every UPDATE (`_CLOSED_UPDATE`,
+  `_POSTHOC_UPDATE`, `_TERMINATED_UPDATE`, `_RESCORE_UPDATE`,
+  `_UNSCORE_POSTHOC`) keys on `prediction_id`, so `--rescore` and
+  `--unscore-posthoc` act across all rows of a deal. `--report` counts
+  rows, not deals. `update_prediction_actuals` stays keyed on
+  `prediction_id`. The rule stands: never backfill
+  `actual_completion_date` from closing milestones.
+- **Writer attribution** (design section 5.4), implemented once in
+  `db.connection`: every connection sets `application_name` =
+  `MARS_APPLICATION_NAME` (default `timeagent`; the API pool, the
+  pipeline pool and the NOTIFY listener alike), and every write path
+  runs `SELECT set_config('mars.writer', $1, false)` /
+  `SELECT set_config('mars.run_id', $1, false)` right after acquiring
+  the connection, with `mars.writer = 'timeagent:<trigger>'`, trigger in
+  `batch` (`scripts.batch_run`), `notify` (`new_deal` listener), `api`
+  (`POST /predict/...`), `mcp` (`POST /predict/{pk}?trigger=mcp`, for
+  AF-MARS-MCP), `run_deal` (`scripts.run_deal`), `score`
+  (`scripts.score_predictions`), `backtest` (`scripts.backtest`), and
+  `mars.run_id` = the same id stored in the row (`<trigger>-<UTC
+  stamp>-<6 hex>`, e.g. `batch-20261031T032500Z-5180ef`). Entry points
+  call `set_run_context(<trigger>)`; a write without a context raises.
+
 ## Known limitations / next steps
 
 - AFT ignores censoring (pending deals) — a proper survival
@@ -105,9 +156,9 @@ baseline the model must beat.
 - ~~`update_prediction_actuals` still needs a scheduled job~~ — done.
   Two house-mars crons now run against MARS:
   - `scripts.score_predictions --apply --rescore`, Sundays 06:30 UTC,
-    writes actuals and errors for closed deals. A prediction dated after
-    the close gets actuals only and never errors. `--report` counts such
-    rows as `posthoc_n`.
+    writes actuals and errors for every unscored row of a closed deal.
+    A prediction dated after the close gets actuals only and never
+    errors. `--report` counts such rows as `posthoc_n`.
   - `scripts.batch_run --quiet`, nightly 03:25 UTC, re-predicts every
     Active deal before the 03:45 EV run. The `new_deal` listener only
     auto-predicts Active deals announced within

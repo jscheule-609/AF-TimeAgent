@@ -1,7 +1,9 @@
 """Batch run timing agent on active deals, write results to stdout.
 
-Re-predicts ALL Active deals on every run (upsert keeps one row per
-deal_pk) so estimates tighten as milestones are observed.  Deals whose
+Re-predicts ALL Active deals on every run so estimates tighten as
+milestones are observed; timing_predictions is append-only, so each run
+adds one row per deal under one run_id (mars.writer =
+'timeagent:batch') and readers take v_latest_timing_prediction.  Deals whose
 status has flipped are excluded — the April-2026 batch predicted 28
 deals that had already closed.  deal_outcome is not filtered (8 Active
 deals with a NULL outcome went 5 months without a re-predict) and deals
@@ -26,10 +28,11 @@ warnings.filterwarnings('ignore')
 
 from models.deal import DealInput
 from pipeline.orchestrator import run_timing_estimation
-from db.connection import get_pool, close_pool
+from db.connection import get_pool, close_pool, set_run_context
 
 
 async def main(quiet: bool = False):
+    run_id = set_run_context("batch")
     pool = await get_pool()
     async with pool.acquire() as c:
         deals = await c.fetch("""
@@ -97,13 +100,14 @@ async def main(quiet: bool = False):
         secs = (datetime.now(timezone.utc) - started).total_seconds()
         print(f'{started:%Y-%m-%dT%H:%M:%SZ} batch_run: '
               f'{len(ok)}/{len(results)} ok, {len(fail)} failed, '
-              f'{len(no_ticker)} no-ticker, {secs:.0f}s')
+              f'{len(no_ticker)} no-ticker, {secs:.0f}s  run_id={run_id}')
         if no_ticker:
             print(f'  no-ticker: {no_ticker}')
         for r in fail:
             print(f'  FAIL deal_pk={r["pk"]} {r["tgt"]}: {r["err"]}')
         return
-    print(f'=== {len(ok)}/{len(results)} succeeded, {len(fail)} failed ===\n')
+    print(f'=== {len(ok)}/{len(results)} succeeded, {len(fail)} failed '
+          f'(run_id={run_id}) ===\n')
 
     print(f'{"Target":24} {"P50":12} {"AJ Guide":12} {"Flag":14} {"Gap":>6} {"Unexp":>6} {"Adj":>4} {"Crit":10}')
     print('-' * 96)

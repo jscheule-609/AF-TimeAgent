@@ -25,7 +25,7 @@ load_dotenv()  # must run before sec_api_tools is imported
 
 import numpy as np
 
-from db.connection import get_pool, close_pool
+from db.connection import get_pool, close_pool, set_run_context
 from db.queries_comparables import D2_COHORT_FILTER
 from db.queries_prediction import update_prediction_actuals
 from pipeline.backtest_runner import run_backtest_deal
@@ -137,6 +137,8 @@ async def run_backtest(
     no_persist: bool = False,
 ):
     """Main backtest loop; no_persist disables prediction and actuals writes."""
+    # One run id for the whole backtest (mars.writer = 'timeagent:backtest').
+    set_run_context("backtest")
     universe = await fetch_backtest_universe(
         lookback_years, max_deals,
         announced_after, announced_before,
@@ -385,6 +387,7 @@ async def run_single_deal(
     no_persist: bool = False,
 ) -> dict | None:
     """Run backtest for one specific deal. Prints detailed output."""
+    set_run_context("backtest")
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

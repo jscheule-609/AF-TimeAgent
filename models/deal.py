@@ -1,7 +1,7 @@
 """Core deal data models."""
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -88,6 +88,10 @@ class DealParameters(BaseModel):
     deal_attitude: str = "Friendly"
     mars_deal_pk: Optional[int] = None
     mars_deal_id: Optional[str] = None
+    # deals.updated_at as read when the deal was loaded; recorded in
+    # timing_predictions.input_snapshot_ref so a row can be tied to the
+    # deal state it was computed from.
+    mars_deal_updated_at: Optional[datetime] = None
 
 
 class ValidationResult(BaseModel):

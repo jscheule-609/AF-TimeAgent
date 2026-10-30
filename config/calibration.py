@@ -9,12 +9,28 @@ hardcoded defaults".
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 _CALIBRATION_PATH = Path(__file__).parent / "calibration.json"
 _cache: Optional[Dict[str, Any]] = None
+_fingerprint: Optional[str] = None
+
+
+def calibration_fingerprint() -> Optional[str]:
+    """``sha256[:12]`` of ``config/calibration.json`` (None if absent).
+
+    Stored in ``timing_predictions.input_snapshot_ref`` so a row can be
+    tied to the base rates / durations it was computed with.
+    """
+    global _fingerprint
+    if _fingerprint is None and _CALIBRATION_PATH.exists():
+        _fingerprint = hashlib.sha256(
+            _CALIBRATION_PATH.read_bytes()
+        ).hexdigest()[:12]
+    return _fingerprint
 
 
 def load_calibration() -> Dict[str, Any]:

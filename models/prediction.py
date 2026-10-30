@@ -28,6 +28,13 @@ class PredictionRecord(BaseModel):
     actual_timeline_days: Optional[int] = None
     actual_outcome: str = "pending"
     model_version: str = "0.2.0"
+    # Append-only columns (AF-AJ migration 048b): the run that wrote the
+    # row, the date the prediction is "as of", and a reference to the
+    # inputs it was computed from (deal row updated_at, comparable
+    # deal_pks, model / calibration version, guidance source).
+    run_id: Optional[str] = None
+    as_of_date: Optional[date] = None
+    input_snapshot_ref: Optional[dict] = None
 
 
 class CalibrationMetrics(BaseModel):

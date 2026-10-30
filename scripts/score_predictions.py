@@ -1,7 +1,17 @@
 """Score stored timing predictions against realized outcomes.
 
 Idempotent: only rows with ``actual_close_date IS NULL`` are touched, so
-it is safe as a weekly cron on house-mars:
+it is safe as a weekly cron on house-mars.
+
+timing_predictions is append-only (AF-AJ migration 048b): a deal has one
+row per run.  Every selection below is a plain JOIN to deals with a
+per-row predicate -- no DISTINCT ON, no latest-per-deal step -- so EVERY
+unscored row of a resolved deal is scored on its own prediction_date
+(a mid-deal re-predict is a forecast; a row written after the close is
+post-hoc), and every UPDATE keys on prediction_id.  --rescore and
+--unscore-posthoc likewise act per row across all rows of a deal.
+Writes are attributed as mars.writer = 'timeagent:score' with a run id
+per invocation (db.connection.set_run_context).
 
     docker exec timeagent python -m scripts.score_predictions            # dry-run (default)
     docker exec timeagent python -m scripts.score_predictions --apply    # write
@@ -47,11 +57,17 @@ import sys
 from datetime import date
 from statistics import mean, median
 
-from db.connection import get_pool, close_pool
+from db.connection import (
+    attribute_writer, close_pool, get_pool, set_run_context,
+)
 
 logger = logging.getLogger("score_predictions")
 
 # -- candidate selection (shared by dry-run and apply) ---------------------
+#
+# Per-row unscored predicate: tp.actual_close_date IS NULL.  A row flagged
+# 'Terminated' (no close date) whose deal later flips to Completed is
+# picked up by the closed path and scored.
 
 _CLOSED_BASE = """
     SELECT tp.prediction_id, tp.deal_pk, tp.model_version,
@@ -142,12 +158,13 @@ _TERMINATED_UPDATE = """
     RETURNING tp.deal_pk
 """
 
-# Scored rows whose derived columns no longer match p50/p75/p90 -- happens
-# when a scored deal is re-predicted (the backtest UPSERT replaces the
-# percentiles; before the step7 prediction_id fix its actuals update then
-# matched nothing).  --rescore recomputes them; idempotent.  Post-hoc rows
-# are excluded: their NULL errors are deliberate, and the weekly
-# --apply --rescore cron would otherwise score them all again.
+# Scored rows whose derived columns no longer match p50/p75/p90 -- the
+# pre-048b upsert could replace a scored row's percentiles (before the
+# step7 prediction_id fix its actuals update then matched nothing); with
+# append-only rows this is a consistency net.  --rescore recomputes them
+# per row; idempotent.  Post-hoc rows are excluded: their NULL errors are
+# deliberate, and the weekly --apply --rescore cron would otherwise score
+# them all again.
 _STALE_WHERE = """
     WHERE tp.actual_close_date IS NOT NULL
       AND tp.prediction_date <= tp.actual_close_date
@@ -187,8 +204,9 @@ _UNSCORABLE = """
 """
 
 # Rows scored although predicted after the close: the 09-13 backtest batch,
-# the 09-30 backfill re-predicts, or a later manual re-predict of a closed
-# deal (the UPSERT moves prediction_date but keeps the actuals).
+# the 09-30 backfill re-predicts, or (pre-048b) a manual re-predict of a
+# closed deal whose upsert moved prediction_date but kept the actuals.
+# Per row: every such row of a deal is cleared.
 _POSTHOC_SCORED_WHERE = """
     WHERE tp.actual_close_date IS NOT NULL
       AND tp.prediction_date > tp.actual_close_date
@@ -226,7 +244,8 @@ async def score(apply: bool, rescore: bool = False) -> dict:
     already-scored rows whose percentiles changed since they were scored.
     """
     pool = await get_pool()
-    out: dict = {"apply": apply, "rescore": rescore}
+    run_id = set_run_context("score")
+    out: dict = {"apply": apply, "rescore": rescore, "run_id": run_id}
     async with pool.acquire() as conn:
         closed = await conn.fetch(_CLOSED_CANDIDATES)
         posthoc = await conn.fetch(_CLOSED_POSTHOC)
@@ -273,6 +292,7 @@ async def score(apply: bool, rescore: bool = False) -> dict:
             print("\nDry run - nothing written (pass --apply).")
             return out
 
+        await attribute_writer(conn, "score", run_id)
         async with conn.transaction():
             closed_done = await conn.fetch(_CLOSED_UPDATE)
             posthoc_done = await conn.fetch(_POSTHOC_UPDATE)
@@ -285,7 +305,7 @@ async def score(apply: bool, rescore: bool = False) -> dict:
         print(f"\nWritten: {len(closed_done)} closed scored, "
               f"{len(posthoc_done)} post-hoc actuals, "
               f"{len(term_done)} terminated flagged, "
-              f"{len(rescored)} rescored.")
+              f"{len(rescored)} rescored.  run_id={run_id}")
     return out
 
 
@@ -295,10 +315,12 @@ async def unscore_posthoc(apply: bool) -> dict:
     Actuals and percentiles are kept, so the errors stay recomputable.
     """
     pool = await get_pool()
+    run_id = set_run_context("score")
     async with pool.acquire() as conn:
         rows = await conn.fetch(_POSTHOC_SCORED)
         out: dict = {"apply": apply, "posthoc_scored": len(rows),
-                     "deal_pks": [r["deal_pk"] for r in rows]}
+                     "deal_pks": [r["deal_pk"] for r in rows],
+                     "run_id": run_id}
         by_ver: dict[str, int] = {}
         for r in rows:
             by_ver[r["model_version"]] = by_ver.get(r["model_version"], 0) + 1
@@ -311,6 +333,7 @@ async def unscore_posthoc(apply: bool) -> dict:
         if not apply:
             print("\nDry run - nothing written (pass --apply).")
             return out
+        await attribute_writer(conn, "score", run_id)
         async with conn.transaction():
             done = await conn.fetch(_UNSCORE_POSTHOC)
         out["unscored"] = len(done)
@@ -320,6 +343,8 @@ async def unscore_posthoc(apply: bool) -> dict:
 
 
 # -- calibration report -----------------------------------------------------
+# Per row: a deal predicted several times contributes each scored
+# forecast row (n counts rows, not deals).
 
 _SCORED_ROWS = """
     SELECT tp.model_version, tp.deal_pk,

@@ -82,4 +82,6 @@ class DealTimingReport(BaseModel):
     jurisdictions_modeled: list[str] = []
     guidance_reconciliation: Optional[GuidanceReconciliation] = None
     prediction_id: Optional[str] = None
+    # timing_predictions.run_id of the stored row (set by step 7).
+    run_id: Optional[str] = None
     generated_at: Optional[str] = None
