@@ -1,4 +1,4 @@
-"""step 7 must report the prediction_id the UPSERT actually kept (no DB)."""
+"""step 7 must report the prediction_id store_prediction RETURNed (no DB)."""
 from datetime import date
 
 import pytest
@@ -17,10 +17,12 @@ def _report() -> DealTimingReport:
 
 @pytest.mark.asyncio
 async def test_log_prediction_uses_prediction_id_returned_by_store(monkeypatch):
-    # store_prediction keeps the existing prediction_id on UPSERT conflict and
-    # RETURNs it; log_prediction must report that id, not its fresh uuid. The
-    # 2026-09-13 LLM-off backtest re-predicted 120 already-stored deals and
-    # update_prediction_actuals(<fresh uuid>) matched zero rows.
+    # store_prediction RETURNs the prediction_id it wrote; log_prediction
+    # must report that id, not its own uuid (the pre-048b upsert kept the
+    # existing id: the 2026-09-13 LLM-off backtest re-predicted 120
+    # already-stored deals and update_prediction_actuals(<fresh uuid>)
+    # matched zero rows).  Append-only writes return the fresh id, so the
+    # two agree; the contract is still "report what was stored".
     async def _fake_store(record: dict) -> str:
         return "existing-row-id"
     monkeypatch.setattr(s7, "store_prediction", _fake_store)

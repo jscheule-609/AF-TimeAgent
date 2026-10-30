@@ -1,3 +1,8 @@
+-- SUPERSEDED (2026-10-31): AF-AJ migration 048b drops
+-- uq_timing_predictions_deal again and makes timing_predictions
+-- append-only (run_id / as_of_date / input_snapshot_ref,
+-- v_latest_timing_prediction).  Kept for history; do not re-apply.
+--
 -- FU-6: collapse duplicate timing_predictions rows to latest-per-deal,
 -- then enforce uniqueness so future writes can UPSERT instead of INSERT-only.
 --

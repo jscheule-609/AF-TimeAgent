@@ -1,10 +1,13 @@
-"""Returned UPSERT IDs must survive the backtest pipeline (no database)."""
+"""The prediction_id RETURNed by store_prediction must survive the backtest
+pipeline, and the backtest must run under a 'backtest' run context (no
+database)."""
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from db import connection as db_conn
 from db import queries_prediction
 from models.timeline import DealTimingReport
 from pipeline import backtest_runner, step7_prediction_log
@@ -59,7 +62,12 @@ async def test_backtest_actuals_use_stored_prediction_id(monkeypatch):
     pool.acquire.return_value.__aenter__.return_value = conn
     monkeypatch.setattr("db.connection.get_pool", AsyncMock(return_value=pool))
     monkeypatch.setattr(backtest, "fetch_backtest_universe", AsyncMock(return_value=[row]))
-    store = AsyncMock(return_value="existing-id")
+    seen_ctx = {}
+
+    async def _store(record):
+        seen_ctx["ctx"] = db_conn.current_run_context()
+        return "existing-id"
+    store = AsyncMock(side_effect=_store)
     monkeypatch.setattr(step7_prediction_log, "store_prediction", store)
     update = AsyncMock()
     monkeypatch.setattr(backtest, "update_prediction_actuals", update)
@@ -68,6 +76,11 @@ async def test_backtest_actuals_use_stored_prediction_id(monkeypatch):
 
     store.assert_awaited_once()
     assert store.call_args.args[0]["prediction_id"] != "existing-id"
+    # append-only: the row carries the backtest run id, and the write ran
+    # under mars.writer = timeagent:backtest
+    trigger, run_id = seen_ctx["ctx"]
+    assert trigger == "backtest" and run_id.startswith("backtest-")
+    assert store.call_args.args[0]["run_id"] == run_id
     assert results[0]["prediction_id"] == report.prediction_id == "existing-id"
     update.assert_awaited_once_with(
         prediction_id="existing-id", actual_close_date=close,
@@ -81,12 +94,23 @@ async def test_actuals_warn_only_when_no_rows_match(monkeypatch, caplog, status,
     conn = SimpleNamespace(execute=AsyncMock(return_value=status))
     pool = MagicMock()
     pool.acquire.return_value.__aenter__.return_value = conn
-    monkeypatch.setattr(queries_prediction, "get_pool", AsyncMock(return_value=pool))
+    # writes go through db.connection.acquire_for_write, which needs a
+    # run context for the mars.writer / mars.run_id tags
+    monkeypatch.setattr(db_conn, "get_pool", AsyncMock(return_value=pool))
+    db_conn.set_run_context("backtest", "backtest-test-run")
 
     await queries_prediction.update_prediction_actuals(
         "existing-id", date(2025, 4, 1), 90, "closed", "HSR",
     )
 
+    # the two set_config tags precede the UPDATE, which stays keyed on
+    # prediction_id
+    sqls = [c.args[0] for c in conn.execute.await_args_list]
+    assert "set_config('mars.writer'" in sqls[0]
+    assert conn.execute.await_args_list[0].args[1] == "timeagent:backtest"
+    assert "set_config('mars.run_id'" in sqls[1]
+    assert conn.execute.await_args_list[1].args[1] == "backtest-test-run"
+    assert "WHERE prediction_id = $1" in sqls[2]
     assert conn.execute.call_args.args[1] == "existing-id"
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert bool(warnings) == warns

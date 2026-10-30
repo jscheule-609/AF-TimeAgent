@@ -121,8 +121,11 @@ CREATE TABLE deals (
 );
 CREATE TABLE timing_predictions (
     prediction_id text PRIMARY KEY,
-    deal_pk bigint UNIQUE REFERENCES deals(deal_pk),
+    deal_pk bigint REFERENCES deals(deal_pk),
     prediction_date timestamptz NOT NULL DEFAULT now(),
+    run_id text,
+    as_of_date date NOT NULL DEFAULT CURRENT_DATE,
+    input_snapshot_ref jsonb,
     p50_close_date date, p75_close_date date, p90_close_date date,
     actual_close_date date, actual_timeline_days integer,
     actual_critical_path text, actual_outcome text DEFAULT 'pending',

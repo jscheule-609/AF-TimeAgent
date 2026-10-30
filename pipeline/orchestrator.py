@@ -15,7 +15,10 @@ from pipeline.step4_antitrust import assess_antitrust_overlap
 from pipeline.step5_regulatory_map import map_jurisdictions
 from pipeline.step5_5_state_machine import simulate_regulatory_paths
 from pipeline.step6_timeline import assemble_timeline
-from pipeline.step7_prediction_log import log_prediction
+from pipeline.step7_prediction_log import (
+    build_input_snapshot_ref,
+    log_prediction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -250,9 +253,28 @@ async def run_timing_estimation(
                 f"Guidance reconciliation failed: {e}"
             )
 
-    # Log prediction (non-fatal if it fails)
+    # Log prediction (non-fatal if it fails).  Append-only: a new row
+    # per run, with a reference to the inputs it was computed from.
     try:
-        await log_prediction(report, deal_params.mars_deal_pk)
+        snapshot_ref = build_input_snapshot_ref(
+            report,
+            deal_updated_at=getattr(
+                deal_params, "mars_deal_updated_at", None,
+            ),
+            comparable_deal_pks=[
+                d.deal_pk for g in comparable_groups for d in g.deals
+            ],
+            extra={
+                "as_of": _date.today(),
+                "observed_milestones": sorted(observed_milestones)
+                if observed_milestones else [],
+                "guidance_anchor": guidance_anchor,
+            },
+        )
+        await log_prediction(
+            report, deal_params.mars_deal_pk,
+            input_snapshot_ref=snapshot_ref,
+        )
     except Exception as e:
         logger.warning(f"Prediction logging failed (non-fatal): {e}")
 

@@ -3,14 +3,22 @@ AF-TimeAgent API Server.
 
 Endpoints:
   POST /predict/{deal_pk}    — run timing prediction for a deal
+                               (?trigger=mcp when called by AF-MARS-MCP)
   POST /predict/batch        — predict N most recent active deals
-  GET  /results/{deal_pk}    — get latest prediction from MARS
-  GET  /results/active       — all active deals with predictions
+  GET  /results/{deal_pk}    — latest prediction (v_latest_timing_prediction)
+  GET  /results/active       — all active deals with their latest prediction
   GET  /health               — service health check
   GET  /health/db            — database connectivity
 
 Runs a NOTIFY listener that auto-predicts new deals as they're
 inserted into the MARS deals table.
+
+timing_predictions is append-only (AF-AJ migration 048b): every
+prediction is a new row under a run_id; readers go through
+v_latest_timing_prediction.  Every connection carries application_name
+(MARS_APPLICATION_NAME, default "timeagent") and every write path sets
+mars.writer = 'timeagent:<api|mcp|notify>' / mars.run_id
+(db.connection.set_run_context).
 """
 
 import asyncio
@@ -23,6 +31,8 @@ from datetime import date, datetime, timedelta
 import asyncpg
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from db.connection import current_run_id, server_settings, set_run_context
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +52,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Connecting to {dsn.split('@')[1]}")
     pool = await asyncpg.create_pool(
         dsn, min_size=2, max_size=10, timeout=10,
+        server_settings=server_settings(),
     )
     logger.info("Connection pool created")
 
@@ -100,6 +111,9 @@ class PredictionResult(BaseModel):
     # row's prediction_id — what a caller (the MCP trigger tool) cites.
     model_version: str | None = None
     prediction_id: str | None = None
+    # timing_predictions.run_id of that row (one per batch / API call /
+    # NOTIFY); also the session's mars.run_id for the change log.
+    run_id: str | None = None
     guidance_flag: str | None = None
     scenarios: list[dict] | None = None
     # DealTimingReport.risk_flags are RiskFlag objects
@@ -129,11 +143,24 @@ class HealthResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────
 
+# Who called /predict: the API default, or AF-MARS-MCP (?trigger=mcp).
+_API_TRIGGERS = ("api", "mcp")
+
+
+def _api_trigger(trigger: str) -> str:
+    if trigger not in _API_TRIGGERS:
+        raise HTTPException(
+            422, f"trigger must be one of {list(_API_TRIGGERS)}",
+        )
+    return trigger
+
+
 @app.post("/predict/batch")
-async def predict_batch(count: int = 20):
-    """Predict N most recent active deals."""
+async def predict_batch(count: int = 20, trigger: str = "api"):
+    """Predict N most recent active deals (one run_id for the batch)."""
     if not pool:
         raise HTTPException(503, "Not initialized")
+    run_id = set_run_context(_api_trigger(trigger))
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -166,15 +193,17 @@ async def predict_batch(count: int = 20):
     return {
         "evaluated": len(results),
         "failed": failed,
+        "run_id": run_id,
         "results": [r.model_dump() for r in results],
     }
 
 
 @app.post("/predict/{deal_pk}", response_model=PredictionResult)
-async def predict_deal(deal_pk: int):
-    """Run timing prediction for a single deal."""
+async def predict_deal(deal_pk: int, trigger: str = "api"):
+    """Run timing prediction for a single deal (a new run_id per call)."""
     if not pool:
         raise HTTPException(503, "Not initialized")
+    set_run_context(_api_trigger(trigger))
 
     try:
         report, elapsed = await _run_pipeline(deal_pk)
@@ -187,22 +216,40 @@ async def predict_deal(deal_pk: int):
     return _report_to_result(report, elapsed, deal_pk)
 
 
+# Latest row per deal.  The view (AF-AJ 048b) orders by prediction_date
+# DESC, non-snapshot rows first, created_at DESC, prediction_id DESC.
+_LATEST_PREDICTION_SQL = """
+    SELECT * FROM v_latest_timing_prediction
+    WHERE deal_pk = $1
+"""
+
+_ACTIVE_LATEST_SQL = """
+    SELECT
+        tp.deal_pk,
+        d.target,
+        d.acquirer,
+        tp.p50_close_date,
+        tp.p75_close_date,
+        tp.p90_close_date,
+        tp.critical_path_jurisdiction,
+        tp.prediction_date,
+        tp.run_id,
+        tp.created_at
+    FROM v_latest_timing_prediction tp
+    JOIN deals d ON tp.deal_pk = d.deal_pk
+    WHERE d.deal_status = 'Active'
+    ORDER BY tp.deal_pk
+"""
+
+
 @app.get("/results/{deal_pk}")
 async def get_results(deal_pk: int):
-    """Get latest timing prediction from MARS."""
+    """Latest timing prediction for a deal (v_latest_timing_prediction)."""
     if not pool:
         raise HTTPException(503, "Not initialized")
 
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT * FROM timing_predictions
-            WHERE deal_pk = $1
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            deal_pk,
-        )
+        row = await conn.fetchrow(_LATEST_PREDICTION_SQL, deal_pk)
 
     if not row:
         raise HTTPException(
@@ -217,40 +264,24 @@ async def get_results(deal_pk: int):
 
 @app.get("/results/active")
 async def get_active_results():
-    """All active deals with timing predictions."""
+    """All active deals with their latest timing prediction."""
     if not pool:
         raise HTTPException(503, "Not initialized")
 
     async with pool.acquire() as conn:
-        # Check if timing_predictions table exists
+        # The view arrives with AF-AJ migration 048b; before it, nothing.
         exists = await conn.fetchval(
             """
             SELECT EXISTS(
                 SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'timing_predictions'
+                WHERE table_name = 'v_latest_timing_prediction'
             )
             """
         )
         if not exists:
             return []
 
-        rows = await conn.fetch(
-            """
-            SELECT DISTINCT ON (tp.deal_pk)
-                tp.deal_pk,
-                d.target,
-                d.acquirer,
-                tp.p50_close_date,
-                tp.p75_close_date,
-                tp.p90_close_date,
-                tp.critical_path_jurisdiction,
-                tp.created_at
-            FROM timing_predictions tp
-            JOIN deals d ON tp.deal_pk = d.deal_pk
-            WHERE d.deal_status = 'Active'
-            ORDER BY tp.deal_pk, tp.created_at DESC
-            """,
-        )
+        rows = await conn.fetch(_ACTIVE_LATEST_SQL)
 
     return [
         {k: (str(v) if hasattr(v, 'isoformat') else v)
@@ -354,6 +385,7 @@ def _report_to_result(report, elapsed, deal_pk: int) -> PredictionResult:
         critical_path=getattr(report, "critical_path_jurisdiction", None),
         model_version=PredictionRecord.model_fields["model_version"].default,
         prediction_id=getattr(report, "prediction_id", None),
+        run_id=getattr(report, "run_id", None) or current_run_id(),
         guidance_flag=getattr(gr, "flag", None) if gr else None,
         risk_flags=flags,
         elapsed_seconds=round(elapsed, 1),
@@ -372,7 +404,9 @@ async def _notify_listener(dsn: str):
 
     while True:
         try:
-            conn = await asyncpg.connect(dsn)
+            conn = await asyncpg.connect(
+                dsn, server_settings=server_settings(),
+            )
             logger.info("NOTIFY listener connected")
             _listener_active = True
 
@@ -452,12 +486,13 @@ async def _auto_predict(deal_pk: int):
         _autopredict_skipped += 1
         logger.info(f"Auto-predict skipped deal_pk={deal_pk}: {reason}")
         return
-    logger.info(f"Auto-predicting deal_pk={deal_pk}")
+    run_id = set_run_context("notify")
+    logger.info(f"Auto-predicting deal_pk={deal_pk} run_id={run_id}")
     try:
         report, elapsed = await _run_pipeline(deal_pk)
         logger.info(
             f"Auto-prediction complete: deal_pk={deal_pk} "
-            f"elapsed={elapsed:.1f}s"
+            f"elapsed={elapsed:.1f}s run_id={run_id}"
         )
     except Exception as e:
         logger.error(

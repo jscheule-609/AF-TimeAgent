@@ -9,7 +9,7 @@ from datetime import date
 from models.deal import DealInput
 from pipeline.orchestrator import run_timing_estimation
 from output.markdown_renderer import render_full_report, render_compact_report
-from db.connection import close_pool
+from db.connection import close_pool, set_run_context
 
 
 def main():
@@ -85,6 +85,7 @@ def main():
 
 
 async def _run(deal_input: DealInput):
+    set_run_context("run_deal")
     try:
         return await run_timing_estimation(deal_input)
     finally:

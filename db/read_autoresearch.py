@@ -69,6 +69,7 @@ async def load_deal_params_from_mars(
                 d.deal_structure_type,
                 d.date_announced, d.date_expected_close_parsed,
                 d.industry, d.gics_sector, d.deal_attitude,
+                d.updated_at AS deal_updated_at,
                 pe_acq.ticker AS acquirer_ticker,
                 COALESCE(pe_acq.short_name, pe_acq.legal_name) AS acquirer_name,
                 pe_tgt.ticker AS target_ticker,
@@ -124,6 +125,7 @@ async def load_deal_params_from_mars(
         deal_attitude=row["deal_attitude"] or "Friendly",
         mars_deal_pk=row["deal_pk"],
         mars_deal_id=row["deal_id"],
+        mars_deal_updated_at=row["deal_updated_at"],
     )
 
 
