@@ -31,6 +31,7 @@ load_dotenv()
 import numpy as np
 
 from db.connection import get_pool, close_pool
+from db.queries_comparables import D2_COHORT_FILTER
 from pipeline.step2b_guidance_anchor import parse_guidance
 from scoring.aft import build_features
 
@@ -44,7 +45,10 @@ DEFAULT_TRACK_WEIGHTS = {
 
 
 async def fetch_closed_deals(pool, cutoff: date | None) -> list[dict]:
-    sql = """
+    # D2 / migration 046: the cohort filter also keeps undated "Closed" rows
+    # (whose stored timeline_days is not derived from a completion date) out
+    # of the AFT fit.
+    sql = f"""
         SELECT d.deal_pk, d.date_announced, d.actual_completion_date,
                d.timeline_days, d.deal_value_usd, d.gics_sector,
                d.type_of_consideration, d.deal_attitude,
@@ -55,6 +59,7 @@ async def fetch_closed_deals(pool, cutoff: date | None) -> list[dict]:
         WHERE d.deal_outcome = 'Closed'
           AND d.date_announced IS NOT NULL
           AND d.timeline_days BETWEEN 5 AND 1000
+          {D2_COHORT_FILTER}
     """
     params = []
     if cutoff:

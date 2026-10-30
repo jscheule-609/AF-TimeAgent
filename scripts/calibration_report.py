@@ -27,6 +27,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from db.connection import get_pool
+from db.queries_comparables import D2_COHORT_FILTER
+
+# D2 / migration 046: every closed-deal population below (rates and the HSR
+# duration) carries D2_COHORT_FILTER; the EC / CMA duration queries read
+# regulatory_reviews alone and are outcome-agnostic.
 
 
 @dataclass
@@ -63,7 +68,7 @@ async def _fetch_rows(
 
 async def compute_hsr_stats(pool) -> Dict[str, Any]:
     """Compute HSR second request rates and durations."""
-    overall_rate_sql = """
+    overall_rate_sql = f"""
         SELECT
             COUNT(*) FILTER (
                 WHERE rr.phase_2_start_date IS NOT NULL
@@ -75,10 +80,11 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
             AND rr.jurisdiction_code = 'US'
             AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
     """
     overall_rate = await _fetch_scalar(pool, overall_rate_sql)
 
-    by_sector_sql = """
+    by_sector_sql = f"""
         SELECT
             d.gics_sector AS sector,
             COUNT(*) FILTER (
@@ -91,12 +97,13 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
             AND rr.jurisdiction_code = 'US'
             AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
         GROUP BY d.gics_sector
         ORDER BY d.gics_sector
     """
     by_sector = await _fetch_rows(pool, by_sector_sql)
 
-    duration_sql = """
+    duration_sql = f"""
         SELECT
             percentile_cont(0.5)  WITHIN GROUP (
                 ORDER BY (clear_date - filing_date)
@@ -117,6 +124,7 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
                 AND rr.jurisdiction_code = 'US'
                 AND rr.review_status != 'not_filed'
             WHERE d.deal_outcome = 'Closed'
+              {D2_COHORT_FILTER}
               AND rr.filing_date IS NOT NULL
               AND rr.clearance_date IS NOT NULL
               -- data-quality guard: ~6% of rows have clearance
@@ -148,7 +156,7 @@ async def compute_hsr_stats(pool) -> Dict[str, Any]:
 
 async def compute_ec_stats(pool) -> Dict[str, Any]:
     """Compute EC Phase 2 rates and durations."""
-    rate_sql = """
+    rate_sql = f"""
         SELECT
             COUNT(*) FILTER (
                 WHERE rr.phase_2_start_date IS NOT NULL
@@ -160,6 +168,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
             AND rr.jurisdiction_code = 'EU'
             AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
     """
     phase2_rate = await _fetch_scalar(pool, rate_sql)
 
@@ -233,7 +242,7 @@ async def compute_ec_stats(pool) -> Dict[str, Any]:
 
 async def compute_cma_stats(pool) -> Dict[str, Any]:
     """Compute CMA Phase 2 referral rates and durations."""
-    rate_sql = """
+    rate_sql = f"""
         SELECT
             COUNT(*) FILTER (
                 WHERE rr.phase_2_outcome IS NOT NULL
@@ -245,6 +254,7 @@ async def compute_cma_stats(pool) -> Dict[str, Any]:
             AND rr.jurisdiction_code = 'GB'
             AND rr.review_status != 'not_filed'
         WHERE d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
     """
     phase2_rate = await _fetch_scalar(pool, rate_sql)
 
@@ -289,18 +299,20 @@ async def compute_cma_stats(pool) -> Dict[str, Any]:
 
 async def compute_samr_stats(pool) -> Dict[str, Any]:
     """Compute SAMR activation rate (how often SAMR review was filed)."""
-    rate_sql = """
+    rate_sql = f"""
         SELECT
             COUNT(DISTINCT rr.deal_pk)::float
             / NULLIF(
-                (SELECT COUNT(*) FROM deals
-                 WHERE deal_outcome = 'Closed'), 0
+                (SELECT COUNT(*) FROM deals d
+                 WHERE d.deal_outcome = 'Closed'
+                 {D2_COHORT_FILTER}), 0
             ) AS samr_applicable_rate
         FROM regulatory_reviews rr
         JOIN deals d ON rr.deal_pk = d.deal_pk
         WHERE rr.jurisdiction_code = 'CN'
           AND rr.review_status != 'not_filed'
           AND d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
     """
     applicable_rate = await _fetch_scalar(pool, rate_sql)
 
@@ -315,18 +327,20 @@ async def compute_samr_stats(pool) -> Dict[str, Any]:
 
 async def compute_cfius_stats(pool) -> Dict[str, Any]:
     """Compute CFIUS review activation rate."""
-    rate_sql = """
+    rate_sql = f"""
         SELECT
             COUNT(DISTINCT rr.deal_pk)::float
             / NULLIF(
-                (SELECT COUNT(*) FROM deals
-                 WHERE deal_outcome = 'Closed'), 0
+                (SELECT COUNT(*) FROM deals d
+                 WHERE d.deal_outcome = 'Closed'
+                 {D2_COHORT_FILTER}), 0
             ) AS cfius_review_rate
         FROM regulatory_reviews rr
         JOIN deals d ON rr.deal_pk = d.deal_pk
         WHERE rr.jurisdiction_code = 'CFIUS'
           AND rr.review_status != 'not_filed'
           AND d.deal_outcome = 'Closed'
+          {D2_COHORT_FILTER}
     """
     review_rate = await _fetch_scalar(pool, rate_sql)
 

@@ -1,5 +1,6 @@
 """Enforcement climate and trend queries against the MARS v2 database."""
 from db.connection import get_pool
+from db.queries_comparables import D2_COHORT_FILTER
 
 
 async def get_enforcement_stats(months: int = 24) -> dict:
@@ -11,7 +12,7 @@ async def get_enforcement_stats(months: int = 24) -> dict:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total_deals,
                 COUNT(*) FILTER (
@@ -56,6 +57,8 @@ async def get_enforcement_stats(months: int = 24) -> dict:
             WHERE d.date_announced >= NOW()
                 - ($1 || ' months')::interval
               AND d.deal_outcome IN ('Closed', 'Terminated')
+              -- D2 / migration 046: historical cohort filter
+              {D2_COHORT_FILTER}
             """,
             str(months),
         )
