@@ -231,7 +231,7 @@ _ACTIVE_LATEST_SQL = """
         tp.p50_close_date,
         tp.p75_close_date,
         tp.p90_close_date,
-        tp.critical_path_jurisdiction,
+        tp.predicted_critical_path AS critical_path_jurisdiction,
         tp.prediction_date,
         tp.run_id,
         tp.created_at

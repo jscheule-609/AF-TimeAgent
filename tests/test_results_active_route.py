@@ -59,3 +59,14 @@ def test_results_per_deal_still_routes_by_deal_pk(monkeypatch):
     assert _conn(pool).fetchrow.await_args.args[1] == 7
     _conn(pool).fetch.assert_not_awaited()
     assert client.get("/results/not-a-pk").status_code == 422
+
+
+def test_results_active_selects_only_columns_the_writer_stores():
+    """2026-10-30: once the route became reachable it failed with
+    'column tp.critical_path_jurisdiction does not exist' - store_prediction
+    writes predicted_critical_path. The response key is kept by aliasing."""
+    from api import server
+
+    sql = server._ACTIVE_LATEST_SQL
+    assert "tp.critical_path_jurisdiction" not in sql
+    assert "tp.predicted_critical_path AS critical_path_jurisdiction" in sql
